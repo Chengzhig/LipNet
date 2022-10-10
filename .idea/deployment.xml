@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always" serverName="mingwu@frp2.freefrp.net:30800 password" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
+    <serverData>
+      <paths name="czg@10.82.85.162:22 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/LRW/remote_lipLRN" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="czg@10.82.85.162:22 password (8)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/LRW/pythonproject" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="frp2.freefrp.net">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/workspace_czg" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mingwu@118.31.36.32:10022 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/workspace_czg/pycharmproject" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mingwu@118.31.36.32:10022 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/workspace_czg/pycharmproject" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mingwu@frp2.freefrp.net:30800 password">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mingwu@frp2.freefrp.net:30800 password (1)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mingwu@frp2.freefrp.net:30800 password (2)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/mingwu/workspace_czg" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>
