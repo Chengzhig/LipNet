@@ -162,10 +162,14 @@ corpus = codecs.open(data_path + 'corpus.txt', 'r', 'utf8').read()
 chars = codecs.open(data_path + 'char.txt', 'r', 'utf8').read()
 word_chars = codecs.open(data_path + 'wordChars.txt', 'r', 'utf8').read()
 
-
 # chars = 'Cabcdefghijklmnopqrstuvwxyz '
 # wbs = WordBeamSearch(28, 'NGrams', 0.0, corpus.encode('utf8'), chars.encode('utf8'),
 #                      word_chars.encode('utf8'))
+
+count = 0
+Tp = 0
+Tn_1 = 0
+Tn_2 = 0
 
 
 def test():
@@ -184,6 +188,7 @@ def test():
         cons_total = 0.0
         attns = []
 
+        global count, Tp, Tn_1, Tn_2
         count = 0
         Tp = 0
         Tn_1 = 0
@@ -199,19 +204,20 @@ def test():
             target = label
             total = total + video.size(0)
             # border = input.get('duration').cuda(non_blocking=True).float()
-            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-            # target_length = input.get('target_lengths')
+            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            target_length = input.get('target_lengths')
 
             with autocast():
                 pinyin, character = NETModel(video)
 
             p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
-            # v_acc.append(Tp / (Tp + Tn_1 + Tn_2))
+            tmp_v_acc = computeACC(pinyin, pinyinlable, target_length)
+            v_acc.append(tmp_v_acc)
 
             toc = time.time()
             if (i_iter % 10 == 0):
                 msg = ''
-                # msg = add_msg(msg, ' v_acc={:.5f}', Tp / (Tp + Tn_1 + Tn_2))
+                msg = add_msg(msg, ' v_acc={:.5f}', tmp_v_acc)
                 msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
 
@@ -301,11 +307,8 @@ def train():
                 log_probs = pinyin.float()
                 log_probs = log_probs.transpose(0, 1)
                 targets = pinyinlable
-                # preds_size = torch.IntTensor([log_probs.size(0)] * args.batch_size)
                 input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
-                # target_lengths = torch.full((args.batch_size,), 40, dtype=torch.long)
                 target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
-
                 loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
                 loss_nn = loss_fn(character, label)
 
@@ -351,11 +354,8 @@ def train():
         scheduler_net.step()
 
 
-def computeACC(pinyin,pinyinlable, target_length):
-    count = 0
-    Tp = 0
-    Tn_1 = 0
-    Tn_2 = 0
+def computeACC(pinyin, pinyinlable, target_length):
+    global count, Tp, Tn_1, Tn_2
     y_v = torch.softmax(pinyin, 2)
     targets = []
     for index, length in enumerate(target_length):
@@ -385,10 +385,6 @@ def computeACC(pinyin,pinyinlable, target_length):
     for i, label in enumerate(preb_labels):
         label = torch.tensor(label).cuda()
         targets[i] = targets[i].cuda()
-        # print('================')
-        # print(label)
-        # print(targets[i])
-        # print('================')
         if len(label) != len(targets[i]):
             Tn_1 += 1
             continue
@@ -404,6 +400,7 @@ def computeACC(pinyin,pinyinlable, target_length):
                                                                         (Tp + Tn_1 + Tn_2)))
             y_v1 = y_v1.float()
     return Tp / (Tp + Tn_1 + Tn_2)
+
 
 def getLable(i):
     dict = [" C", " a", "ai", " ai ", " an", "  an jian", "  an quan", " an zhao", "  ba", "  ba li", "  ba xi",
