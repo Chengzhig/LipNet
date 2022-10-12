@@ -1,9 +1,7 @@
 import argparse
 from functools import partial
-
-from model.TCN import Lipreading
 from model.VIT import VisionTransformer
-from .video_cnn import VideoCNN, RestNet18, ResNet, BasicBlock, RestNetBasicBlock
+from .video_cnn import VideoCNN
 import torch
 import torch.nn as nn
 import random

@@ -161,7 +161,7 @@ class RestNet18(nn.Module):
 class ResNet(nn.Module):
 
     def __init__(self, block, layers, se=False):
-        self.inplanes = 1
+        self.inplanes = 64
         super(ResNet, self).__init__()
         self.se = se
         self.layer1 = self._make_layer(block, 64, layers[0])

@@ -73,7 +73,7 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-NETModel = LipNet_Pinyin(args).cuda()
+NETModel = LipNet_Pinyin().cuda()
 
 
 # video_model = VideoModel(args).cuda()
@@ -102,7 +102,6 @@ def load_missing(model, pretrained_dict):
 
 lr = args.batch_size / 32.0 / torch.cuda.device_count() * args.lr
 optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
-
 scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_Net, T_max=args.max_epoch, eta_min=5e-6)
 
 if (args.weights is not None):
@@ -308,15 +307,15 @@ def train():
                 target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
 
                 loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
-                loss_nn = loss_fn(pinyin, label)
+                loss_nn = loss_fn(character, label)
 
             loss_all = loss_nn + loss_bp
             loss['CE loss_bp'] = loss_bp
             loss['CE loss_nn'] = loss_nn
 
-            NETModel.zero_grad()
+            optim_Net.zero_grad()
             scaler.scale(loss_all).backward()
-            scaler.step(NETModel)
+            scaler.step(optim_Net)
             scaler.update()
 
             toc = time.time()
@@ -325,7 +324,7 @@ def train():
                                                              (toc - tic) * (len(loader) - i_iter) / 3600.0)
             for k, v in loss.items():
                 msg += ',{}={:.5f}'.format(k, v)
-            msg = msg + str(',lr=' + str(showLR(NETModel)))
+            msg = msg + str(',lr=' + str(showLR(optim_Net)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
             msg = msg + str(',best_acc_a={:2f}'.format(best_acc_a))
             print(msg)
@@ -351,6 +350,60 @@ def train():
             tot_iter += 1
         scheduler_net.step()
 
+
+def computeACC(pinyin,pinyinlable, target_length):
+    count = 0
+    Tp = 0
+    Tn_1 = 0
+    Tn_2 = 0
+    y_v = torch.softmax(pinyin, 2)
+    targets = []
+    for index, length in enumerate(target_length):
+        label = pinyinlable[index, :length]
+        targets.append(label)
+        if index == 0:
+            tmpPinyinLable = label
+        else:
+            tmpPinyinLable = torch.cat([tmpPinyinLable, label], dim=0)
+    preb_labels = []
+    for i in range(y_v.shape[0]):
+        preb = y_v[i, :, :]
+        preb_label = preb.argmax(dim=1)
+        no_repeat_blank_label = []
+        pre_c = preb_label[0]
+        if pre_c != 28:
+            no_repeat_blank_label.append(pre_c)
+        for c in preb_label:  # dropout repeate label and blank label
+            if (pre_c == c) or (c == 28):
+                if c == 28:
+                    pre_c = c
+                continue
+            no_repeat_blank_label.append(c)
+            pre_c = c
+        preb_labels.append(no_repeat_blank_label)
+
+    for i, label in enumerate(preb_labels):
+        label = torch.tensor(label).cuda()
+        targets[i] = targets[i].cuda()
+        # print('================')
+        # print(label)
+        # print(targets[i])
+        # print('================')
+        if len(label) != len(targets[i]):
+            Tn_1 += 1
+            continue
+        if targets[i].eq(label).all():
+            print("success predict:")
+            print(label.detach().cpu().numpy())
+            Tp += 1
+        else:
+            Tn_2 += 1
+            count += 1
+
+            print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
+                                                                        (Tp + Tn_1 + Tn_2)))
+            y_v1 = y_v1.float()
+    return Tp / (Tp + Tn_1 + Tn_2)
 
 def getLable(i):
     dict = [" C", " a", "ai", " ai ", " an", "  an jian", "  an quan", " an zhao", "  ba", "  ba li", "  ba xi",

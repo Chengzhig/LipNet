@@ -7,8 +7,7 @@ import torchvision
 import torch.nn.init as init
 
 from torch.utils.data import DataLoader
-
-from model import ResNet, BasicBlock
+from .video_cnn import ResNet, BasicBlock
 
 
 # class LipNet(nn.Module):
@@ -80,13 +79,13 @@ class LipNet_Pinyin(nn.Module):
         self.pinyinEncode = PinyinEncoder(in_features=512, hidden_size=256, GRUorLSTM=0)
         self.pinyinDecode = PinyinDecoder(in_features=512, hidden_size=512, GRUorLSTM=0)
         self.characterDecode = CharacterDecoder(in_features=512, hidden_size=512, GRUorLSTM=0)
-        self.PinyinMLP = MLP(in_features=16, out_features=28)
-        self.CharacterMLP = MLP(in_features=32, out_features=1000)
-        self.PSoft = nn.Softmax(dim=0)
+        self.PinyinMLP = MLP(in_features=256, out_features=29)
+        self.CharacterMLP = MLP(in_features=512*40, out_features=1000)
+        self.PSoft = nn.LogSoftmax(dim=0)
         self.CSoft = nn.Softmax(dim=0)
 
     def forward(self, x):
-        B, C, T, H, W = x.size()[:]
+        B, T, C, H, W = x.size()[:]
         Xve = self.videoEncode(x)
         Xpd = self.pinyinDecode(Xve)
         Xcd = self.characterDecode(Xve)
@@ -100,7 +99,7 @@ class LipNet_Pinyin(nn.Module):
         Pp = self.PSoft(self.PinyinMLP(PinyinInput))
 
         # CharacterPrediction
-        CharacterInput = CharacterInput.view(B, T, -1)
+        CharacterInput = CharacterInput.view(B, -1)
         Pc = self.CSoft(self.CharacterMLP(CharacterInput))
 
         return Pp, Pc
@@ -183,11 +182,12 @@ class VideoEncoder(nn.Module):
             init.constant_(self.gru.bias_ih_l0_reverse[i: i + self.rnn_size], 0)
 
     def forward(self, x):
+        x = x.transpose(1, 2)
         b, c, t, h, w = x.size()[:]
         x = self.conv(x)
         x = x.transpose(1, 2)
         x = x.contiguous()
-        x = x.view(-1, 64, h, w)
+        x = x.view(-1, 64, x.size(3), x.size(4))
         x = self.resnet18(x)
         x = x.view(b, -1, 512)
         x, _ = self.gru(x)
@@ -372,7 +372,6 @@ class CharacterDecoder(nn.Module):
         else:
             x, _ = self.gru(x)
         return x
-
 
 # class Exp:
 #     def __init__(self, opt):
