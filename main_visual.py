@@ -20,6 +20,7 @@ from LSR import LSR
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 # from word_beam_search import WordBeamSearch
+from model.Mymodel import LipNet_Pinyin
 from model.TCN import Lipreading
 import codecs
 import torchvision.transforms as transforms
@@ -72,8 +73,10 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-# NETModel = NETModel(args).cuda()
-video_model = VideoModel(args).cuda()
+NETModel = LipNet_Pinyin(args).cuda()
+
+
+# video_model = VideoModel(args).cuda()
 # video_MLP = MLP().cuda()
 
 # print(NETModel)
@@ -98,19 +101,19 @@ def load_missing(model, pretrained_dict):
 
 
 lr = args.batch_size / 32.0 / torch.cuda.device_count() * args.lr
-optim_video = optim.Adam(video_model.parameters(), lr=lr, weight_decay=1e-4)
-# optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
+optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
 
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optim_video, T_max=args.max_epoch, eta_min=5e-6)
-# scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_Net, T_max=args.max_epoch, eta_min=5e-6)
+scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_Net, T_max=args.max_epoch, eta_min=5e-6)
 
 if (args.weights is not None):
     print('load weights')
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(NETModel, weight.get('video_model'))
 
-# NETModel = parallel_model(NETModel)
-video_model = parallel_model(video_model)
+NETModel = parallel_model(NETModel)
+
+
+# video_model = parallel_model(video_model)
 
 
 def dataset2dataloader(dataset, batch_size, num_workers, shuffle=True):
@@ -189,9 +192,7 @@ def test():
         t1 = time.time()
 
         for (i_iter, input) in enumerate(loader):
-
-            video_model.eval()
-            # NETModel.eval()
+            NETModel.eval()
 
             tic = time.time()
             video = input.get('video').cuda(non_blocking=True)
@@ -203,14 +204,9 @@ def test():
             # target_length = input.get('target_lengths')
 
             with autocast():
-                if (args.border):
-                    y_v = video_model(video)
-                    # y_v1 = NETModel(y_v, video, border)
-                else:
-                    y_v = video_model(video)
-                    # y_v1 = NETModel(y_v, video)
+                pinyin, character = NETModel(video)
 
-            p_acc.extend((y_v.argmax(-1) == target).cpu().numpy().tolist())
+            p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
             # v_acc.append(Tp / (Tp + Tn_1 + Tn_2))
 
             toc = time.time()
@@ -238,8 +234,6 @@ def showLR(optimizer):
 
 def loss_fn(pred, target):
     return -(target * torch.log(pred) + (1 - target) * torch.log(1 - pred)).sum()
-
-
 
 
 def visualize_feature(x, model, layers=[0, 1]):
@@ -287,15 +281,12 @@ def train():
         for (i_iter, input) in enumerate(loader):
             tic = time.time()
 
-            # NETModel.train()
-            video_model.train()
+            NETModel.train()
 
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
             # border = input.get('duration').cuda(non_blocking=True).float()
-            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-
-            # get_feature(video_model, video, border[0:1])
+            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
 
             loss = {}
             crition1 = torch.nn.BCEWithLogitsLoss()
@@ -306,61 +297,26 @@ def train():
                 loss_fn = nn.CrossEntropyLoss()
 
             with autocast():
-                if (args.mixup):
-                    lambda_ = np.random.beta(alpha, alpha)
-                    index = torch.randperm(video.size(0)).cuda(non_blocking=True)
+                pinyin, character = NETModel(video)
+                ctc_loss = nn.CTCLoss(blank=28, reduction='mean')
+                log_probs = pinyin.float()
+                log_probs = log_probs.transpose(0, 1)
+                targets = pinyinlable
+                # preds_size = torch.IntTensor([log_probs.size(0)] * args.batch_size)
+                input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
+                # target_lengths = torch.full((args.batch_size,), 40, dtype=torch.long)
+                target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
 
-                    mix_video = lambda_ * video + (1 - lambda_) * video[index, :]
-                    mix_border = lambda_ * border + (1 - lambda_) * border[index, :]
+                loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
+                loss_nn = loss_fn(pinyin, label)
 
-                    label_a, label_b = label, label[index]
-
-                    if (args.border):
-                        y_v = video_model(mix_video, mix_border)
-                        # y_v1 = NETModel(y_v, mix_video, mix_border)
-                    else:
-                        y_v = video_model(mix_video)
-                        # y_v1 = NETModel(y_v, mix_video)
-
-                    loss_bp = lambda_ * loss_fn(y_v, label_a) + (1 - lambda_) * loss_fn(y_v, label_b)
-                    # loss_phoneme = crition1(pred, label)
-
-                else:
-                    if (args.border):
-                        y_v = video_model(video)
-                        # y_v1 = NETModel(y_v, video, border)
-                    else:
-                        y_v = video_model(video)
-                        # y_v1 = NETModel(y_v, video)
-
-                    # ctc_loss = nn.CTCLoss(blank=28, reduction='mean')
-                    # log_probs = y_v.float()
-                    # log_probs = log_probs.transpose(0, 1)
-                    # targets = pinyinlable
-                    # # preds_size = torch.IntTensor([log_probs.size(0)] * args.batch_size)
-                    # input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
-                    # # target_lengths = torch.full((args.batch_size,), 40, dtype=torch.long)
-                    # target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
-
-                # loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
-
-                # x = log_probs.transpose(0, 1).half()
-                # pre = video_MLP(x)
-                loss_nn = loss_fn(y_v, label)
-
-                # y_v1 = data_normal_2d(y_v1)
-                # loss_phoneme = crition1(y_v1, phoneme)
-
-                # loss_phoneme = loss_fn(y_v1, multilabel_generate(phoneme)) / video.shape[0]
-            loss_all = loss_nn
-            # loss['CE loss_bp'] = loss_bp
+            loss_all = loss_nn + loss_bp
+            loss['CE loss_bp'] = loss_bp
             loss['CE loss_nn'] = loss_nn
 
-            optim_video.zero_grad()
-            # optim_Net.zero_grad()
+            NETModel.zero_grad()
             scaler.scale(loss_all).backward()
-            scaler.step(optim_video)
-            # scaler.step(optim_Net)
+            scaler.step(NETModel)
             scaler.update()
 
             toc = time.time()
@@ -369,7 +325,7 @@ def train():
                                                              (toc - tic) * (len(loader) - i_iter) / 3600.0)
             for k, v in loss.items():
                 msg += ',{}={:.5f}'.format(k, v)
-            msg = msg + str(',lr=' + str(showLR(optim_video)))
+            msg = msg + str(',lr=' + str(showLR(NETModel)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
             msg = msg + str(',best_acc_a={:2f}'.format(best_acc_a))
             print(msg)
@@ -378,15 +334,14 @@ def train():
             if i_iter == len(loader) - 1:
                 acc, msg = test()
 
-                if ( acc > best_acc):
+                if (acc > best_acc):
                     savename = '{}_weight_pinyin.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
                     torch.save(
                         {
-                            'video_model': video_model.module.state_dict(),
-                            # 'NETModel': NETModel.module.state_dict(),
+                            'NETModel': NETModel.module.state_dict(),
                         }, savename)
 
                 if (tot_iter != 0):
@@ -394,9 +349,7 @@ def train():
                     # best_acc_a = max(acc_a, best_acc_a)
 
             tot_iter += 1
-
-        scheduler.step()
-        # scheduler_net.step()
+        scheduler_net.step()
 
 
 def getLable(i):
