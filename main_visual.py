@@ -27,6 +27,8 @@ import torchvision.transforms as transforms
 from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
+import pickle
+from utils.dataset_lrw1000 import pinyinlist, PhonemeList
 
 torch.backends.cudnn.benchmark = True
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -109,6 +111,17 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(NETModel, weight.get('video_model'))
 
+# pretrained_dict = torch.load(
+# "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
+pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin.pt")
+model_dict = NETModel.state_dict()
+# 1. filter out unnecessary keys
+# pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
+pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
+# 2. overwrite entries in the existing state dict
+model_dict.update(pretrained_dict)
+NETModel.load_state_dict(model_dict)
+
 NETModel = parallel_model(NETModel)
 
 
@@ -172,13 +185,14 @@ Tn_1 = 0
 Tn_2 = 0
 
 
-def test():
+def traintest():
+    tmprandom = random.randint(1, 20)
     with torch.no_grad():
-        dataset = Dataset('val', args)
+        dataset = Dataset('train', args)
         print('Start Testing, Data Length:', len(dataset))
-        loader = dataset2dataloader(dataset, args.batch_size, args.num_workers, shuffle=False)
+        loader = dataset2dataloader(dataset, args.batch_size, args.num_workers, shuffle=True)
 
-        print('start testing')
+        print('start train testing')
         v_acc = []
         p_acc = []
         entropy = []
@@ -188,30 +202,34 @@ def test():
         cons_total = 0.0
         attns = []
 
-        global count, Tp, Tn_1, Tn_2
+        global count, Tp, Tn_1, Tn_2, DictACC
         count = 0
         Tp = 0
         Tn_1 = 0
         Tn_2 = 0
+        DictACC = {}
         t1 = time.time()
 
         for (i_iter, input) in enumerate(loader):
-            NETModel.eval()
+            if i_iter % 20 != tmprandom:
+                continue
 
+            NETModel.eval()
             tic = time.time()
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True)
             target = label
             total = total + video.size(0)
-            # border = input.get('duration').cuda(non_blocking=True).float()
+            border = input.get('duration').cuda(non_blocking=True).float()
             pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
             target_length = input.get('target_lengths')
 
             with autocast():
-                pinyin, character = NETModel(video)
+                # pinyin, character = NETModel(video, border)
+                pinyin = NETModel(video, border)
 
-            p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
-            tmp_v_acc = computeACC(pinyin, pinyinlable, target_length)
+            # p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
+            tmp_v_acc = computeACC(pinyin, pinyinlable, target_length, label)
             v_acc.append(tmp_v_acc)
 
             toc = time.time()
@@ -223,8 +241,73 @@ def test():
 
                 print(msg)
 
-        # acc = float(np.array(v_acc).mean())
-        acc = float(np.array(p_acc).reshape(-1).mean())
+        acc = float(np.array(v_acc).mean())
+        # acc = float(np.array(p_acc).reshape(-1).mean())
+        msg = 'v_acc_{:.5f}_'.format(acc)
+        with open("myDictionary.pkl", "wb") as tf:
+            pickle.dump(DictACC, tf)
+        with open("myDictionary.pkl", "rb") as tf:
+            new_dict = pickle.load(tf)
+        print(new_dict.items())
+        return acc, msg
+
+
+def test():
+    with torch.no_grad():
+        dataset = Dataset('val', args)
+        print('Start Testing, Data Length:', len(dataset))
+        loader = dataset2dataloader(dataset, args.batch_size, args.num_workers, shuffle=False)
+
+        print('start testing')
+
+        v_acc = []
+        p_acc = []
+        entropy = []
+        acc_mean = []
+        total = 0
+        cons_acc = 0.0
+        cons_total = 0.0
+        attns = []
+
+        global count, Tp, Tn_1, Tn_2, DictACC
+        count = 0
+        Tp = 0
+        Tn_1 = 0
+        Tn_2 = 0
+        DictACC = {}
+        t1 = time.time()
+
+        for (i_iter, input) in enumerate(loader):
+            NETModel.eval()
+
+            tic = time.time()
+            video = input.get('video').cuda(non_blocking=True)
+            label = input.get('label').cuda(non_blocking=True)
+            target = label
+            total = total + video.size(0)
+            border = input.get('duration').cuda(non_blocking=True).float()
+            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            target_length = input.get('target_lengths')
+
+            with autocast():
+                # pinyin, character = NETModel(video, border)
+                pinyin = NETModel(video, border)
+
+            # p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
+            tmp_v_acc = computeACC(pinyin, pinyinlable, target_length, label)
+            v_acc.append(tmp_v_acc)
+
+            toc = time.time()
+            if (i_iter % 10 == 0):
+                msg = ''
+                msg = add_msg(msg, ' v_acc={:.5f}', tmp_v_acc)
+                msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
+                msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
+
+                print(msg)
+
+        acc = float(np.array(v_acc).mean())
+        # acc = float(np.array(p_acc).reshape(-1).mean())
         msg = 'v_acc_{:.5f}_'.format(acc)
 
         return acc, msg
@@ -265,13 +348,20 @@ def train():
 
     tot_iter = 0
     best_acc = 0.0
-    best_acc_a = 0.0
+    best_acc_train = 0.0
     adjust_lr_count = 0
     alpha = 0.2
     beta_distribution = torch.distributions.beta.Beta(alpha, alpha)
     scaler = GradScaler()
 
-    # checkpoint = torch.load("./Two_roads/lrw-1000-baseline/_weight_pinyin.pt")
+    # pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
+    # model_dict = NETModel.state_dict()
+    # # 1. filter out unnecessary keys
+    # pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
+    # # 2. overwrite entries in the existing state dict
+    # model_dict.update(pretrained_dict)
+    # NETModel.load_state_dict(model_dict)
+
     # video_model.module.load_state_dict(checkpoint['video_model'])
     # NETModel.module.load_state_dict(checkpoint['NETModel'])
     # print("loading premodel")
@@ -290,11 +380,10 @@ def train():
 
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
-            # border = input.get('duration').cuda(non_blocking=True).float()
+            border = input.get('duration').cuda(non_blocking=True).float()
             pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
 
             loss = {}
-            crition1 = torch.nn.BCEWithLogitsLoss()
 
             if (args.label_smooth):
                 loss_fn = lsr
@@ -302,19 +391,22 @@ def train():
                 loss_fn = nn.CrossEntropyLoss()
 
             with autocast():
-                pinyin, character = NETModel(video)
-                ctc_loss = nn.CTCLoss(blank=28, reduction='mean')
+                # pinyin, character = NETModel(video, border)
+                pinyin = NETModel(video, border)
+
+                ctc_loss = nn.CTCLoss(blank=28, reduction='mean', zero_infinity=True)
                 log_probs = pinyin.float()
                 log_probs = log_probs.transpose(0, 1)
                 targets = pinyinlable
                 input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
                 target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
                 loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
-                loss_nn = loss_fn(character, label)
+                # loss_nn = loss_fn(character, label)
 
-            loss_all = loss_nn + loss_bp
+            # loss_all = loss_nn + loss_bp
+            loss_all = loss_bp
             loss['CE loss_bp'] = loss_bp
-            loss['CE loss_nn'] = loss_nn
+            # loss['CE loss_nn'] = loss_nn
 
             optim_Net.zero_grad()
             scaler.scale(loss_all).backward()
@@ -329,12 +421,13 @@ def train():
                 msg += ',{}={:.5f}'.format(k, v)
             msg = msg + str(',lr=' + str(showLR(optim_Net)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
-            msg = msg + str(',best_acc_a={:2f}'.format(best_acc_a))
+            msg = msg + str(',best_acc_train={:2f}'.format(best_acc_train))
             print(msg)
 
             # or i_iter == 0
             if i_iter == len(loader) - 1:
                 acc, msg = test()
+                trainacc, trainmsg = traintest()
 
                 if (acc > best_acc):
                     savename = '{}_weight_pinyin.pt'.format(args.save_prefix)
@@ -348,14 +441,14 @@ def train():
 
                 if (tot_iter != 0):
                     best_acc = max(acc, best_acc)
-                    # best_acc_a = max(acc_a, best_acc_a)
+                    best_acc_train = max(trainacc, best_acc_train)
 
             tot_iter += 1
         scheduler_net.step()
 
 
-def computeACC(pinyin, pinyinlable, target_length):
-    global count, Tp, Tn_1, Tn_2
+def computeACC(pinyin, pinyinlable, target_length, truelabel):
+    global count, Tp, Tn_1, Tn_2, DictACC
     y_v = torch.softmax(pinyin, 2)
     targets = []
     for index, length in enumerate(target_length):
@@ -371,11 +464,11 @@ def computeACC(pinyin, pinyinlable, target_length):
         preb_label = preb.argmax(dim=1)
         no_repeat_blank_label = []
         pre_c = preb_label[0]
-        if pre_c != 28:
+        if pre_c != 32:
             no_repeat_blank_label.append(pre_c)
         for c in preb_label:  # dropout repeate label and blank label
-            if (pre_c == c) or (c == 28):
-                if c == 28:
+            if (pre_c == c) or (c == 32):
+                if c == 32:
                     pre_c = c
                 continue
             no_repeat_blank_label.append(c)
@@ -384,21 +477,32 @@ def computeACC(pinyin, pinyinlable, target_length):
 
     for i, label in enumerate(preb_labels):
         label = torch.tensor(label).cuda()
+
+        Truelabel = pinyinlist[int(truelabel[i].detach().cpu().numpy())]
+        if Truelabel not in DictACC:
+            DictACC[Truelabel] = {}
+        # if "label" not in DictACC[Truelabel]:
+        #     DictACC[Truelabel]["label"] = targets[i]
+        if "right" not in DictACC[Truelabel]:
+            DictACC[Truelabel]["right"] = 0
+        if "count" not in DictACC[Truelabel]:
+            DictACC[Truelabel]["count"] = 0
         targets[i] = targets[i].cuda()
         if len(label) != len(targets[i]):
             Tn_1 += 1
             continue
         if targets[i].eq(label).all():
-            print("success predict:")
-            print(label.detach().cpu().numpy())
+            DictACC[Truelabel]["right"] += 1
+            # print('success predict:', )
+            # print(label.detach().cpu().numpy())
             Tp += 1
         else:
+            DictACC[Truelabel]["count"] += 1
             Tn_2 += 1
             count += 1
 
-            print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
-                                                                        (Tp + Tn_1 + Tn_2)))
-            y_v1 = y_v1.float()
+    print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
+                                                                (Tp + Tn_1 + Tn_2)))
     return Tp / (Tp + Tn_1 + Tn_2)
 
 

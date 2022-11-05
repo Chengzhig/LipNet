@@ -7,7 +7,7 @@ import torchvision
 import torch.nn.init as init
 
 from torch.utils.data import DataLoader
-from .video_cnn import ResNet, BasicBlock
+from .video_cnn import ResNet, BasicBlock, VideoCNN
 
 
 # class LipNet(nn.Module):
@@ -75,34 +75,49 @@ from .video_cnn import ResNet, BasicBlock
 class LipNet_Pinyin(nn.Module):
     def __init__(self):
         super(LipNet_Pinyin, self).__init__()
-        self.videoEncode = VideoEncoder()
-        self.pinyinEncode = PinyinEncoder(in_features=512, hidden_size=256, GRUorLSTM=0)
-        self.pinyinDecode = PinyinDecoder(in_features=512, hidden_size=512, GRUorLSTM=0)
-        self.characterDecode = CharacterDecoder(in_features=512, hidden_size=512, GRUorLSTM=0)
-        self.PinyinMLP = MLP(in_features=256, out_features=29)
-        self.CharacterMLP = MLP(in_features=512*40, out_features=1000)
+        self.video_cnn = VideoCNN(se=False)
+        self.gru = nn.GRU(513, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
+        # self.videoEncode = VideoEncoder(hidden_size=512)
+        # self.pinyinEncode = PinyinEncoder(in_features=1024, hidden_size=1024, num_layers=1, GRUorLSTM=0)
+        self.pinyinDecode = PinyinDecoder(in_features=2048, hidden_size=1024, num_layers=1, GRUorLSTM=0)
+        # self.characterDecode = CharacterDecoder(in_features=2048, hidden_size=1024, num_layers=1, GRUorLSTM=0)
+        self.PinyinMLP = MLP(in_features=512 * 2, out_features=32, layer=0)
+        # self.CharacterMLP = MLP(in_features=1024 * 2, out_features=1000, layer=0)
+        self.v_cls = nn.Linear(1024 * 2, 1000)
         self.PSoft = nn.LogSoftmax(dim=0)
         self.CSoft = nn.Softmax(dim=0)
+        self.dropout = nn.Dropout(p=0.5)
 
-    def forward(self, x):
+    def forward(self, x, border=None):
         B, T, C, H, W = x.size()[:]
-        Xve = self.videoEncode(x)
+        x = self.video_cnn(x)
+        x = self.dropout(x)
+        # Xve = self.videoEncaode(torch.cat([x, border[:, :, None]], -1))
+        Xve, _ = self.gru(torch.cat([x, border[:, :, None]], -1))
+        Xve = self.dropout(Xve)
+
         Xpd = self.pinyinDecode(Xve)
-        Xcd = self.characterDecode(Xve)
+        # Xpd = self.dropout(Xpd)
+        # Xcd = self.characterDecode(Xve)
+        # Xcd = self.dropout(Xcd)
+
         PinyinInput = Xpd
-        Ype = self.pinyinEncode(PinyinInput)
-        Ycd = self.characterDecode(Ype)
-        CharacterInput = torch.cat([Xcd, Ycd], -1)
+        # Ype = self.pinyinEncode(PinyinInput)
+        # Ype = self.dropout(Ype)
+        # Ycd = self.characterDecode(Ype)
+        # Ycd = self.dropout(Ycd)
+
+        # CharacterInput = torch.cat([Xcd, Ycd], -1)
 
         # PinyinPrediction
         PinyinInput = PinyinInput.view(B, T, -1)
-        Pp = self.PSoft(self.PinyinMLP(PinyinInput))
+        Pp = self.PSoft(self.PinyinMLP(self.dropout(PinyinInput)))
 
         # CharacterPrediction
-        CharacterInput = CharacterInput.view(B, -1)
-        Pc = self.CSoft(self.CharacterMLP(CharacterInput))
-
-        return Pp, Pc
+        # CharacterInput = CharacterInput.view(B, -1)
+        # Pc = self.CharacterMLP(CharacterInput).mean(1)
+        # Pc = self.v_cls(Xve).mean(1)
+        return Pp
 
     def PinyinPrediction(self, x):
         Xve = self.videoEncode(x)
@@ -129,18 +144,37 @@ class LipNet_Pinyin(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, layer=3):
         # TODO
         super(MLP, self).__init__()
-        self.hidden1 = nn.Linear(in_features=in_features, out_features=100, bias=True)
-        self.hidden2 = nn.Linear(100, 100)
-        self.hidden3 = nn.Linear(100, 50)
-        self.predict = nn.Linear(50, out_features)
+        self.layer = layer
+        if layer == 0:
+            self.predict = nn.Linear(in_features=in_features, out_features=out_features, bias=True)
+        elif layer == 1:
+            self.hidden1 = nn.Linear(in_features=in_features, out_features=out_features * 2, bias=True)
+            self.predict = nn.Linear(out_features * 2, out_features)
+        elif layer == 2:
+            self.hidden1 = nn.Linear(in_features=in_features, out_features=out_features * 2, bias=True)
+            self.hidden2 = nn.Linear(out_features * 2, out_features * 2)
+            self.predict = nn.Linear(out_features * 2, out_features)
+        else:
+            self.hidden1 = nn.Linear(in_features=in_features, out_features=out_features * 2, bias=True)
+            self.hidden2 = nn.Linear(out_features * 2, out_features * 2)
+            self.hidden3 = nn.Linear(out_features * 2, out_features * 2)
+            self.predict = nn.Linear(out_features * 2, out_features)
 
     def forward(self, x):
-        x = F.relu(self.hidden1(x))
-        x = F.relu(self.hidden2(x))
-        x = F.relu(self.hidden3(x))
+        if self.layer == 0:
+            pass
+        elif self.layer == 1:
+            x = F.relu(self.hidden1(x))
+        elif self.layer == 2:
+            x = F.relu(self.hidden1(x))
+            x = F.relu(self.hidden2(x))
+        else:
+            x = F.relu(self.hidden1(x))
+            x = F.relu(self.hidden2(x))
+            x = F.relu(self.hidden3(x))
         output = self.predict(x)
         # out = output.view(-1)
 
@@ -148,24 +182,24 @@ class MLP(nn.Module):
 
 
 class VideoEncoder(nn.Module):
-    def __init__(self):
+    def __init__(self, hidden_size):
         super(VideoEncoder, self).__init__()
-        self.rnn_size = 256
-        self.conv = nn.Sequential(
-            nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(2, 2, 2), padding=(2, 3, 3), bias=False),
-            nn.BatchNorm3d(64),
-            nn.ReLU(True),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-        )
-        self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2])
-        self.gru = nn.GRU(512, self.rnn_size, 2, bidirectional=True, dropout=0.2)
+        self.rnn_size = hidden_size
+        # self.conv = nn.Sequential(
+        #     nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(2, 2, 2), padding=(2, 3, 3), bias=False),
+        #     nn.BatchNorm3d(64),
+        #     nn.ReLU(True),
+        #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        # )
+        # self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2])
+        self.gru = nn.GRU(512 + 1, self.rnn_size, 3, bidirectional=True, dropout=0.2)
 
         # initialisations
-        for m in self.conv.modules():
-            if isinstance(m, nn.Conv3d):
-                init.kaiming_normal_(m.weight, nonlinearity='relu')
-                if m.bias is not None:
-                    init.constant_(m.bias, 0)
+        # for m in self.conv.modules():
+        #     if isinstance(m, nn.Conv3d):
+        #         init.kaiming_normal_(m.weight, nonlinearity='relu')
+        #         if m.bias is not None:
+        #             init.constant_(m.bias, 0)
 
         # init.kaiming_normal_(self.pred.weight, nonlinearity='sigmoid')
         # init.constant_(self.pred.bias, 0)
@@ -182,29 +216,32 @@ class VideoEncoder(nn.Module):
             init.constant_(self.gru.bias_ih_l0_reverse[i: i + self.rnn_size], 0)
 
     def forward(self, x):
-        x = x.transpose(1, 2)
-        b, c, t, h, w = x.size()[:]
-        x = self.conv(x)
-        x = x.transpose(1, 2)
-        x = x.contiguous()
-        x = x.view(-1, 64, x.size(3), x.size(4))
-        x = self.resnet18(x)
-        x = x.view(b, -1, 512)
+        # x = x.transpose(1, 2)
+        # b, c, t, h, w = x.size()[:]
+        # x = self.conv(x)
+        # x = x.transpose(1, 2)
+        # x = x.contiguous()
+        # x = x.view(-1, 64, x.size(3), x.size(4))
+        # x = self.resnet18(x)
+        # x = x.view(b, -1, 512)
         x, _ = self.gru(x)
         return x
 
 
 class PinyinEncoder(nn.Module):
-    def __init__(self, in_features, hidden_size, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
         super(PinyinEncoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
+        self.num_layers = num_layers
         self.GRUorLSTM = GRUorLSTM
         if GRUorLSTM == 0:
-            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=True,
+            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                              bidirectional=True,
                               dropout=0.2)
         else:
-            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=True,
+            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                                bidirectional=True,
                                 dropout=0.2)
 
         if GRUorLSTM == 0:
@@ -231,16 +268,19 @@ class PinyinEncoder(nn.Module):
 
 
 class PinyinDecoder(nn.Module):
-    def __init__(self, in_features, hidden_size, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
         super(PinyinDecoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
+        self.num_layers = num_layers
         self.GRUorLSTM = GRUorLSTM
         if GRUorLSTM == 0:
-            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                              bidirectional=False,
                               dropout=0.2)
         else:
-            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                                bidirectional=False,
                                 dropout=0.2)
 
         if GRUorLSTM == 0:
@@ -267,16 +307,19 @@ class PinyinDecoder(nn.Module):
 
 
 class ToneEncoder(nn.Module):
-    def __init__(self, in_features, hidden_size, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
         super(ToneEncoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
+        self.num_layers = num_layers
         self.GRUorLSTM = GRUorLSTM
         if GRUorLSTM == 0:
-            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=True,
+            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                              bidirectional=True,
                               dropout=0.2)
         else:
-            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=True,
+            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                                bidirectional=True,
                                 dropout=0.2)
 
         if GRUorLSTM == 0:
@@ -303,16 +346,19 @@ class ToneEncoder(nn.Module):
 
 
 class ToneDecoder(nn.Module):
-    def __init__(self, in_features, hidden_size, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
         super(ToneDecoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
+        self.num_layers = num_layers
         self.GRUorLSTM = GRUorLSTM
         if GRUorLSTM == 0:
-            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                              bidirectional=False,
                               dropout=0.2)
         else:
-            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                                bidirectional=False,
                                 dropout=0.2)
 
         if GRUorLSTM == 0:
@@ -339,16 +385,19 @@ class ToneDecoder(nn.Module):
 
 
 class CharacterDecoder(nn.Module):
-    def __init__(self, in_features, hidden_size, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
         super(CharacterDecoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
+        self.num_layers = num_layers
         self.GRUorLSTM = GRUorLSTM
         if GRUorLSTM == 0:
-            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.gru = nn.GRU(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                              bidirectional=False,
                               dropout=0.2)
         else:
-            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=2, bidirectional=False,
+            self.lstm = nn.LSTM(input_size=in_features, hidden_size=hidden_size, num_layers=num_layers,
+                                bidirectional=False,
                                 dropout=0.2)
 
         if GRUorLSTM == 0:

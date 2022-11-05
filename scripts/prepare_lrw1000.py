@@ -44,6 +44,7 @@ class LRW1000_Dataset(Dataset):
         data = list(filter(lambda data: data[2] - data[1] <= self.padding, self.data))
         self.lengths = [data[2] - data[1] for data in self.data]
         self.pinyins = pinyins
+        print(pinyins)
 
         self.labels = []
         for i in pinyins:
@@ -484,9 +485,9 @@ def wav_to_numpy_arr_converter(wav_path, target_path):
 
 if (__name__ == '__main__'):
     # 转换wav为npy
-    img1 = cv2.imread('/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/lip/11111131f70e5f6dc399a43bc9f53cf8/10.jpg')
-    cv2.imshow('img', img1)
-    cv2.waitKey(0)
+    # img1 = cv2.imread('/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/lip/11111131f70e5f6dc399a43bc9f53cf8/10.jpg')
+    # cv2.imshow('img', img1)
+    # cv2.waitKey(0)
 
 
     for subset in ['trn', 'val', 'tst']:
