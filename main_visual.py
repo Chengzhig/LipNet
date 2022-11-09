@@ -103,11 +103,11 @@ def load_missing(model, pretrained_dict):
 
 
 lr = args.batch_size / 32.0 / torch.cuda.device_count() * args.lr
-# optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
-optim_Net = optim.Adam([
-    {"params": NETModel.video_cnn.parameters(), "lr": 0.1},
-],
-    lr=lr, weight_decay=1e-4)
+optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
+# optim_Net = optim.Adam([
+#     {"params": NETModel.video_cnn.parameters(), "lr": 0.1},
+# ],
+#     lr=lr, weight_decay=1e-4)
 scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_Net, T_max=args.max_epoch, eta_min=5e-6)
 
 if (args.weights is not None):
@@ -117,14 +117,14 @@ if (args.weights is not None):
 
 # pretrained_dict = torch.load(
 #     "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
-# pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin.pt")
-# model_dict = NETModel.state_dict()
+pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode.pt")
+model_dict = NETModel.state_dict()
 # 1. filter out unnecessary keys
 # pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
-# pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
+pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
 # 2. overwrite entries in the existing state dict
-# model_dict.update(pretrained_dict)
-# NETModel.load_state_dict(model_dict)
+model_dict.update(pretrained_dict)
+NETModel.load_state_dict(model_dict)
 
 NETModel = parallel_model(NETModel)
 
@@ -339,7 +339,7 @@ def train():
                 pinyin, character = NETModel(video, pinyinlable, src_lengths, border=border)
                 # pinyin = NETModel(video, border)
 
-                ctc_loss = nn.CTCLoss(blank=33, reduction='mean', zero_infinity=True)
+                ctc_loss = nn.CTCLoss(blank=48, reduction='mean', zero_infinity=True)
                 log_probs = pinyin.float()
                 log_probs = log_probs.transpose(0, 1)
                 targets = pinyinlable
@@ -409,11 +409,11 @@ def computeACC(pinyin, pinyinlable, target_length, truelabel):
         preb_label = preb.argmax(dim=1)
         no_repeat_blank_label = []
         pre_c = preb_label[0]
-        if pre_c != 33:
+        if pre_c != 49:
             no_repeat_blank_label.append(pre_c)
         for c in preb_label:  # dropout repeate label and blank label
-            if (pre_c == c) or (c == 33):
-                if c == 33:
+            if (pre_c == c) or (c == 49):
+                if c == 49:
                     pre_c = c
                 continue
             no_repeat_blank_label.append(c)
