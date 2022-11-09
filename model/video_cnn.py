@@ -96,10 +96,9 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.se = se
         self.layer1 = self._make_layer(block, 64, layers[0])
-        # self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        # self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer23 = self._make_layer(block, 512, layers[1], stride=2)
-        # self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[2], stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d(1)
 
@@ -134,10 +133,9 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.layer1(x)
-        # x = self.layer2(x)
-        # x = self.layer3(x)
-        x = self.layer23(x)
-        # x = self.layer4(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.bn(x)
@@ -147,7 +145,7 @@ class ResNet(nn.Module):
 class VideoCNN(nn.Module):
     def __init__(self, se=False):
         super(VideoCNN, self).__init__()
-        self.frontend3D = nn.Sequential(
+        self.frontend = nn.Sequential(
             nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64),
             nn.PReLU(),
@@ -155,21 +153,25 @@ class VideoCNN(nn.Module):
         )
         # resnet
         self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se)
-        # self.cbam = Conv_CBAM(64, 512, k=3, s=1, p=1, bias=False)
-        # self.resnet50 = ResNet(Bottleneck, [3, 4, 6, 3], se=se)
         self.dropout = nn.Dropout(p=0.5)
-
+        self.uppool = nn.Sequential(
+            nn.Conv3d(1, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False),
+            nn.BatchNorm3d(64),
+            nn.PReLU(),
+            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        )
         # backend_gru
         # initialize
         self._initialize_weights()
 
     def visual_frontend_forward(self, x):
         x = x.transpose(1, 2)
-        x = self.frontend3D(x)
+        res = self.uppool(x)
+        x = self.frontend(x)
+        x = res + x
         x = x.transpose(1, 2)
         x = x.contiguous()
         x = x.view(-1, 64, x.size(3), x.size(4))
-        # x = self.cbam(x)
         x = self.resnet18(x)
         return x
 

@@ -1,13 +1,24 @@
 import math
+import random
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import torch.nn.init as init
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from torch.utils.data import DataLoader
 from .video_cnn import ResNet, BasicBlock, VideoCNN
+
+
+# config_vocab_size = 48 + 1
+# config_emb_size = 512
+# config_hidden_size = 512
+# enc_hid_dim = 512
+# dec_hid_dim = 512
+# emb_dim = 512
+# dec_output_dim = 48 + 1
 
 
 # class LipNet(nn.Module):
@@ -75,49 +86,71 @@ from .video_cnn import ResNet, BasicBlock, VideoCNN
 class LipNet_Pinyin(nn.Module):
     def __init__(self):
         super(LipNet_Pinyin, self).__init__()
-        self.video_cnn = VideoCNN(se=False)
-        self.gru = nn.GRU(513, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
-        # self.videoEncode = VideoEncoder(hidden_size=512)
+        self.video_cnn = VideoCNN(se=True)
+        # self.gru = nn.GRU(513, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
+        self.videoEncode = VideoEncoder(enc_input=513, hidden_size=512, dropout=0.5, num_layers=1, LSTMorGRU=1)
         # self.pinyinEncode = PinyinEncoder(in_features=1024, hidden_size=1024, num_layers=1, GRUorLSTM=0)
-        self.pinyinDecode = PinyinDecoder(in_features=2048, hidden_size=1024, num_layers=1, GRUorLSTM=0)
+        self.pinyinEncode = Encoder(input_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512, dropout=0.5,
+                                    num_layers=2)
+        self.pinyinDecode = Decoder(output_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512,
+                                    attention=Attention(enc_hid_dim=512, dec_hid_dim=512), num_layers=2, dropout=0.5)
         # self.characterDecode = CharacterDecoder(in_features=2048, hidden_size=1024, num_layers=1, GRUorLSTM=0)
-        self.PinyinMLP = MLP(in_features=512 * 2, out_features=32, layer=0)
+        self.PinyinMLP = MLP(in_features=512, out_features=48 + 1, layer=0)
         # self.CharacterMLP = MLP(in_features=1024 * 2, out_features=1000, layer=0)
-        self.v_cls = nn.Linear(1024 * 2, 1000)
+        self.v_cls = nn.Linear(1024, 1000)
         self.PSoft = nn.LogSoftmax(dim=0)
         self.CSoft = nn.Softmax(dim=0)
         self.dropout = nn.Dropout(p=0.5)
+        self.LN = nn.LayerNorm([512])
+        self.BorderCon = nn.Conv1d(1, 1, kernel_size=5, stride=1, padding=2, bias=False)
 
-    def forward(self, x, border=None):
+    def forward(self, x, tgt, src_lengths, teacher_forcing_ratio=0.5, border=None):  # border  Batch_size,T
         B, T, C, H, W = x.size()[:]
         x = self.video_cnn(x)
-        x = self.dropout(x)
-        # Xve = self.videoEncaode(torch.cat([x, border[:, :, None]], -1))
-        Xve, _ = self.gru(torch.cat([x, border[:, :, None]], -1))
-        Xve = self.dropout(Xve)
+        x = self.LN(x)
+        if border is not None:
+            border = border.unsqueeze(1)
+            border = self.BorderCon(border)
+            border = border.squeeze(1)
+        # border = self.con(src_lengths[:, :, None, None, None])
+        Xve, prev_hidden = self.videoEncode(torch.cat([x, border[:, :, None]], -1))
+        # Xve, _ = self.gru(torch.cat([x, border[:, :, None]], -1))
+        # Xve = self.dropout(Xve)
+        Pp = self.PSoft(self.PinyinMLP(Xve))
 
-        Xpd = self.pinyinDecode(Xve)
+        Xpd, prev_hidden = self.pinyinEncode(Xve, src_lengths)
         # Xpd = self.dropout(Xpd)
         # Xcd = self.characterDecode(Xve)
         # Xcd = self.dropout(Xcd)
 
-        PinyinInput = Xpd
+        tgt_len = tgt.shape[1]
+        dec_input = tgt[:, 0]
+        dec_outputs = torch.zeros(B, tgt_len, 512)
+        for t in range(tgt_len):
+            dec_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, Xpd, src_lengths)
+            dec_outputs[:, t, :] = dec_output
+            teacher_force = random.random() < teacher_forcing_ratio
+            top1 = dec_output.argmax(1)
+            dec_input = tgt[:, t] if teacher_force else top1
+        Pc = self.v_cls(torch.cat([Xve, dec_outputs.cuda()], -1)).mean(1)
+
+        # PinyinInput = Xpd
         # Ype = self.pinyinEncode(PinyinInput)
         # Ype = self.dropout(Ype)
         # Ycd = self.characterDecode(Ype)
         # Ycd = self.dropout(Ycd)
 
-        # CharacterInput = torch.cat([Xcd, Ycd], -1)
+        # CharacterInput = torch.cat([Xve, Ype], -1)
 
         # PinyinPrediction
-        PinyinInput = PinyinInput.view(B, T, -1)
-        Pp = self.PSoft(self.PinyinMLP(self.dropout(PinyinInput)))
+        # PinyinInput = PinyinInput.view(B, T, -1)
+        # Pp = self.PSoft(self.PinyinMLP(Xve))
 
         # CharacterPrediction
         # CharacterInput = CharacterInput.view(B, -1)
         # Pc = self.CharacterMLP(CharacterInput).mean(1)
         # Pc = self.v_cls(Xve).mean(1)
-        return Pp
+        return Pp, Pc
 
     def PinyinPrediction(self, x):
         Xve = self.videoEncode(x)
@@ -182,7 +215,7 @@ class MLP(nn.Module):
 
 
 class VideoEncoder(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(self, enc_input, hidden_size, dropout=0.5, num_layers=2, LSTMorGRU=0):
         super(VideoEncoder, self).__init__()
         self.rnn_size = hidden_size
         # self.conv = nn.Sequential(
@@ -192,8 +225,11 @@ class VideoEncoder(nn.Module):
         #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         # )
         # self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2])
-        self.gru = nn.GRU(512 + 1, self.rnn_size, 3, bidirectional=True, dropout=0.2)
-
+        if LSTMorGRU == 0:
+            self.gru = nn.GRU(enc_input, self.rnn_size, num_layers, bidirectional=False, dropout=0.2)
+        else:
+            self.gru = nn.LSTM(enc_input, self.rnn_size, num_layers, bidirectional=False, dropout=0.2)
+        self.dropout = nn.Dropout(dropout)
         # initialisations
         # for m in self.conv.modules():
         #     if isinstance(m, nn.Conv3d):
@@ -210,22 +246,15 @@ class VideoEncoder(nn.Module):
                           -math.sqrt(3) * stdv, math.sqrt(3) * stdv)
             init.orthogonal_(self.gru.weight_hh_l0[i: i + self.rnn_size])
             init.constant_(self.gru.bias_ih_l0[i: i + self.rnn_size], 0)
-            init.uniform_(self.gru.weight_ih_l0_reverse[i: i + self.rnn_size],
-                          -math.sqrt(3) * stdv, math.sqrt(3) * stdv)
-            init.orthogonal_(self.gru.weight_hh_l0_reverse[i: i + self.rnn_size])
-            init.constant_(self.gru.bias_ih_l0_reverse[i: i + self.rnn_size], 0)
+            if self.gru.bidirectional:
+                init.uniform_(self.gru.weight_ih_l0_reverse[i: i + self.rnn_size],
+                              -math.sqrt(3) * stdv, math.sqrt(3) * stdv)
+                init.orthogonal_(self.gru.weight_hh_l0_reverse[i: i + self.rnn_size])
+                init.constant_(self.gru.bias_ih_l0_reverse[i: i + self.rnn_size], 0)
 
     def forward(self, x):
-        # x = x.transpose(1, 2)
-        # b, c, t, h, w = x.size()[:]
-        # x = self.conv(x)
-        # x = x.transpose(1, 2)
-        # x = x.contiguous()
-        # x = x.view(-1, 64, x.size(3), x.size(4))
-        # x = self.resnet18(x)
-        # x = x.view(b, -1, 512)
-        x, _ = self.gru(x)
-        return x
+        output, hidden = self.gru(x)
+        return output, hidden[-1].detach()
 
 
 class PinyinEncoder(nn.Module):
@@ -268,7 +297,7 @@ class PinyinEncoder(nn.Module):
 
 
 class PinyinDecoder(nn.Module):
-    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM):
+    def __init__(self, in_features, hidden_size, num_layers, GRUorLSTM=0):
         super(PinyinDecoder, self).__init__()
         self.in_features = in_features
         self.rnn_size = hidden_size
@@ -421,6 +450,76 @@ class CharacterDecoder(nn.Module):
         else:
             x, _ = self.gru(x)
         return x
+
+
+class Encoder(nn.Module):
+    def __init__(self, input_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout=0.5, num_layers=2):
+        super(Encoder, self).__init__()
+        self.vocab_size = input_dim
+        # self.embedding = nn.Embedding(input_dim, emb_dim, padding_idx=32)
+        self.gru = nn.GRU(input_dim, enc_hid_dim, num_layers=num_layers, batch_first=True,
+                          bidirectional=True, dropout=dropout)
+        self.dropout = nn.Dropout(dropout)
+        # self.linear = nn.Linear(enc_hid_dim * 2, dec_hid_dim * 2)
+        # self.relu = nn.ReLU()
+
+    def forward(self, enc_input, text_lengths):
+        # enc_input = self.embedding(enc_input)
+        embedded = self.dropout(enc_input)
+        # embedded = pack_padded_sequence(embedded, text_lengths.cpu().int(), batch_first=True, enforce_sorted=False)
+        output, hidden = self.gru(embedded)
+        # output, _ = pad_packed_sequence(output, batch_first=True)
+        # output = self.relu(self.linear(output))
+        # hidden = torch.tanh(self.linear(torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)))
+        hidden = torch.tanh(hidden[-2:, :, :])
+        return output, hidden
+
+
+class Decoder(nn.Module):
+    def __init__(self, output_dim, emb_dim, enc_hid_dim, dec_hid_dim, attention, num_layers, dropout=0.5):
+        super(Decoder, self).__init__()
+        self.vocab_size = output_dim
+        self.embedding = nn.Embedding(output_dim, emb_dim, padding_idx=48)
+        self.attention = attention
+        self.gru = nn.GRU(enc_hid_dim * 2 + emb_dim, dec_hid_dim, num_layers=num_layers,
+                          batch_first=True)
+        self.linear = nn.Linear(enc_hid_dim + 2 * dec_hid_dim + emb_dim, output_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, dec_input, prev_hidden, enc_output, text_lengths):
+        # dec_input = [batch_size]
+        # prev_hidden = [batch_size, hidden_size]
+        # enc_output = [batch_size, src_len, hidden_size]
+        dec_input = dec_input.unsqueeze(1)
+        embedded = self.embedding(dec_input.long())
+        a = self.attention(embedded, enc_output, text_lengths).unsqueeze(1)  # [batch_size, 1, src_len]
+        c = torch.bmm(a, enc_output)  # [batch_size, 1, hidden_size]
+        gru_input = torch.cat([embedded, c], dim=2)
+        dec_output, dec_hidden = self.gru(gru_input, prev_hidden)
+        dec_output = self.linear(
+            torch.cat((dec_output.squeeze(1), c.squeeze(1), embedded.squeeze(1)), dim=1))  # [batch_size, vocab_size]
+        return dec_output, dec_hidden.squeeze(0)
+
+
+class Attention(nn.Module):
+    def __init__(self, enc_hid_dim, dec_hid_dim):
+        super(Attention, self).__init__()
+        self.linear = nn.Linear(enc_hid_dim * 2 + dec_hid_dim, dec_hid_dim)
+        self.v = nn.Linear(dec_hid_dim, 1)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, dec_input, enc_output, text_lengths):
+        # enc_output = [batch_size, seq_len, hidden_size]
+        # dec_input = [batch_size, hidden_size]
+        seq_len = enc_output.shape[1]
+        s = dec_input.repeat(1, seq_len, 1)
+        x = torch.tanh(self.linear(torch.cat([enc_output, s], dim=2)))
+        attention = self.v(x).squeeze(-1)
+        max_len = enc_output.shape[1]
+        # mask = [batch_size, seq_len]
+        mask = torch.arange(max_len).expand(text_lengths.shape[0], max_len).cuda() >= text_lengths.cuda().unsqueeze(1)
+        attention.masked_fill_(mask.cuda(), float('-inf'))
+        return self.softmax(attention)  # [batch, seq_len]
 
 # class Exp:
 #     def __init__(self, opt):
