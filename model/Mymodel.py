@@ -106,7 +106,7 @@ class LipNet_Pinyin(nn.Module):
 
         self.BorderCon = nn.Conv1d(1, 1, kernel_size=5, stride=1, padding=2, bias=False)
 
-    def forward(self, x, tgt, src_st, src_ed, teacher_forcing_ratio=0.1, border=None):  # border  Batch_size,T
+    def forward(self, x, tgt, src_lengths, teacher_forcing_ratio=0.4, border=None):  # border  Batch_size,T
 
         B, T, C, H, W = x.size()[:]
         x = self.video_cnn(x)
@@ -129,7 +129,7 @@ class LipNet_Pinyin(nn.Module):
         dec_input = tgt[:, 0]
         dec_outputs = torch.zeros(B, tgt_len, 512)
         for t in range(tgt_len):
-            dec_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, Xpd, src_st, src_ed)
+            dec_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, Xpd, src_lengths)
             dec_outputs[:, t, :] = dec_output
             teacher_force = random.random() < teacher_forcing_ratio
             top1 = dec_output.argmax(1)
@@ -488,13 +488,13 @@ class Decoder(nn.Module):
         self.linear = nn.Linear(enc_hid_dim + 2 * dec_hid_dim + emb_dim, output_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, dec_input, prev_hidden, enc_output, src_st, src_ed):
+    def forward(self, dec_input, prev_hidden, enc_output, src_lengths):
         # dec_input = [batch_size]
         # prev_hidden = [batch_size, hidden_size]
         # enc_output = [batch_size, src_len, hidden_size]
         dec_input = dec_input.unsqueeze(1)
         embedded = self.embedding(dec_input.long())
-        a = self.attention(embedded, enc_output, src_st, src_ed).unsqueeze(1)  # [batch_size, 1, src_len]
+        a = self.attention(embedded, enc_output, src_lengths).unsqueeze(1)  # [batch_size, 1, src_len]
         c = torch.bmm(a, enc_output)  # [batch_size, 1, hidden_size]
         gru_input = torch.cat([embedded, c], dim=2)
         dec_output, dec_hidden = self.gru(gru_input, prev_hidden)
@@ -510,7 +510,7 @@ class Attention(nn.Module):
         self.v = nn.Linear(dec_hid_dim, 1)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, dec_input, enc_output, src_st, src_ed):
+    def forward(self, dec_input, enc_output, src_lengths):
         # enc_output = [batch_size, seq_len, hidden_size]
         # dec_input = [batch_size, hidden_size]
         seq_len = enc_output.shape[1]
@@ -519,8 +519,8 @@ class Attention(nn.Module):
         attention = self.v(x).squeeze(-1)
         max_len = enc_output.shape[1]
         # mask = [batch_size, seq_len]
-        length = torch.arange(max_len).expand(src_st.shape[0], max_len).cuda()
-        mask = (length >= src_ed.cuda().unsqueeze(1)) != (length < src_st.cuda().unsqueeze(1))
+        length = torch.arange(max_len).expand(src_lengths.shape[0], max_len).cuda()
+        mask = length >= src_lengths.cuda().unsqueeze(1)
         attention.masked_fill_(mask.cuda(), float('-inf'))
         return self.softmax(attention)  # [batch, seq_len]
 

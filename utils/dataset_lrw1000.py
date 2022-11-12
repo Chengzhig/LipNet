@@ -470,8 +470,7 @@ class LRW1000_Dataset(Dataset):
             t += 1
         pkl['target_lengths'] = torch.tensor(t - 1).numpy()
         pkl['pinyinlable'] = pinyinlable
-        pkl['src_ed'] = torch.tensor(ed)
-        pkl['src_st'] = torch.tensor(st)
+        pkl['src_lengths'] = torch.tensor(ed-st)
 
         # t = 0
         # for item in pkl['pinyinlable']:
