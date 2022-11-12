@@ -348,17 +348,15 @@ class LRW1000_Dataset(Dataset):
             # 3080
             self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/trn'
             # 3090
-            # self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/trn'
+            # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/trn'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/trn'
-        # elif (self.phase == 'val'):
-        #     self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/val'
         else:
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
             self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/tst'
             # 3090
-            # self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/tst'
+            # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/tst'
 
         self.data = glob.glob(os.path.join(self.index_root, '*.pkl'))
@@ -472,7 +470,8 @@ class LRW1000_Dataset(Dataset):
             t += 1
         pkl['target_lengths'] = torch.tensor(t - 1).numpy()
         pkl['pinyinlable'] = pinyinlable
-        pkl['tgt'] = torch.tensor(ed - st)
+        pkl['src_ed'] = torch.tensor(ed)
+        pkl['src_st'] = torch.tensor(st)
 
         # t = 0
         # for item in pkl['pinyinlable']:

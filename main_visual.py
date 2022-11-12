@@ -1,10 +1,4 @@
-import argparse
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from matplotlib import pyplot as plt
-from sklearn.metrics import accuracy_score
-from torch.cuda import device
 from torch.utils.data import DataLoader
 import math
 import os
@@ -14,21 +8,15 @@ import time
 from model import *
 import torch.optim as optim
 import random
-import pdb
-import shutil
 from LSR import LSR
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 # from word_beam_search import WordBeamSearch
 from model.Mymodel import LipNet_Pinyin
-from model.TCN import Lipreading
 import codecs
 import torchvision.transforms as transforms
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
-import pickle
 from utils.dataset_lrw1000 import pinyinlist, PhonemeList
+from tensorboardX import SummaryWriter
 
 torch.backends.cudnn.benchmark = True
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -75,13 +63,8 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-NETModel = LipNet_Pinyin().cuda()
-
-
-# video_model = VideoModel(args).cuda()
-# video_MLP = MLP().cuda()
-
-# print(NETModel)
+NETModel = LipNet_Pinyin(args).cuda()
+writer = SummaryWriter(comment="log")
 
 
 def parallel_model(model):
@@ -115,13 +98,13 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(NETModel, weight.get('video_model'))
 
-# pretrained_dict = torch.load(
-#     "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
-pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode.pt")
+pretrained_dict = torch.load(
+    "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
+# pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode.pt")
 model_dict = NETModel.state_dict()
 # 1. filter out unnecessary keys
-# pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
-pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
+pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
+# pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
 # 2. overwrite entries in the existing state dict
 model_dict.update(pretrained_dict)
 NETModel.load_state_dict(model_dict)
@@ -235,32 +218,33 @@ def test(Istrain=0):
             label = input.get('label').cuda(non_blocking=True)
             total = total + video.size(0)
             border = input.get('duration').cuda(non_blocking=True).float()
-            src_lengths = input.get('tgt').cuda(non_blocking=True)
+            src_st = input.get('src_st').cuda(non_blocking=True)
+            src_ed = input.get('src_ed').cuda(non_blocking=True)
             pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-            target_length = input.get('target_lengths')
+            # target_length = input.get('target_lengths')
 
             with autocast():
-                pinyin, character = NETModel(video, pinyinlable, src_lengths, border=border)
+                character = NETModel(video, border, src_st, src_ed, border=border)
                 # pinyin = NETModel(video, border)
 
             v_acc.extend((character.argmax(-1) == label).cpu().numpy().tolist())
-            tmp_p_acc = computeACC(pinyin, pinyinlable, target_length, label)
-            p_acc.append(tmp_p_acc)
+            # tmp_p_acc = computeACC(pinyin, pinyinlable, target_length, label)
+            # p_acc.append(tmp_p_acc)
 
             toc = time.time()
             if (i_iter % 10 == 0):
                 msg = ''
                 msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
-                msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
+                # msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(testloader) - i_iter) / 3600.0)
 
                 print(msg)
 
         acc = float(np.array(v_acc).reshape(-1).mean())
-        pinyin_acc = float(np.array(p_acc).reshape(-1).mean())
+        # pinyin_acc = float(np.array(p_acc).reshape(-1).mean())
         msg = 'v_acc_{:.5f}_'.format(acc)
 
-        return acc, pinyin_acc, msg
+        return acc, msg
 
 
 def showLR(optimizer):
@@ -297,18 +281,6 @@ def train():
     beta_distribution = torch.distributions.beta.Beta(alpha, alpha)
     scaler = GradScaler()
 
-    # pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
-    # model_dict = NETModel.state_dict()
-    # # 1. filter out unnecessary keys
-    # pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
-    # # 2. overwrite entries in the existing state dict
-    # model_dict.update(pretrained_dict)
-    # NETModel.load_state_dict(model_dict)
-
-    # video_model.module.load_state_dict(checkpoint['video_model'])
-    # NETModel.module.load_state_dict(checkpoint['NETModel'])
-    # print("loading premodel")
-
     for epoch in range(max_epoch):
         total = 0.0
         v_acc = 0.0
@@ -324,9 +296,11 @@ def train():
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
-            src_lengths = input.get('tgt').cuda(non_blocking=True)
-            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-            pinyinlable_length = input.get('target_lengths').cuda(non_blocking=True)
+
+            src_st = input.get('src_st').cuda(non_blocking=True)
+            src_ed = input.get('src_ed').cuda(non_blocking=True)
+            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            # pinyinlable_length = input.get('target_lengths').cuda(non_blocking=True)
 
             loss = {}
 
@@ -336,22 +310,38 @@ def train():
                 loss_fn = nn.CrossEntropyLoss()
 
             with autocast():
-                pinyin, character = NETModel(video, pinyinlable, src_lengths, border=border)
-                # pinyin = NETModel(video, border)
 
-                ctc_loss = nn.CTCLoss(blank=48, reduction='mean', zero_infinity=True)
-                log_probs = pinyin.float()
-                log_probs = log_probs.transpose(0, 1)
-                targets = pinyinlable
-                input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
-                target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
-                loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
-                loss_nn = loss_fn(character, label)
+                if (args.mixup):
+                    lambda_ = np.random.beta(alpha, alpha)
+                    index = torch.randperm(video.size(0)).cuda(non_blocking=True)
 
-            loss_all = loss_nn + loss_bp
+                    mix_video = lambda_ * video + (1 - lambda_) * video[index, :]
+                    mix_border = lambda_ * border + (1 - lambda_) * border[index, :]
+                    # mix_pinyinlable = lambda_ * pinyinlable + (1 - lambda_) * pinyinlable[index, :]
+                    # mix_src_lengths = lambda_ * src_lengths + (1 - lambda_) * src_lengths[index, :]
+
+                    label_a, label_b = label, label[index]
+
+                    if (args.border):
+                        character = NETModel(mix_video, border, src_st, src_ed, border=mix_border)
+                    else:
+                        character = NETModel(mix_video, border, src_st, src_ed)
+
+                    loss_bp = lambda_ * loss_fn(character, label_a) + (1 - lambda_) * loss_fn(character, label_b)
+
+                else:
+                    if (args.border):
+                        character = NETModel(video, border, src_st, src_ed, border=border)
+                    else:
+                        character = NETModel(video, border, src_st, src_ed)
+
+                    loss_bp = loss_fn(character, label)
+
+            loss_all = loss_bp
+            writer.add_scalar("loss", loss_all, i_iter * (epoch + 1))
             # loss_all = loss_bp
             loss['CE loss_bp'] = loss_bp
-            loss['CE loss_nn'] = loss_nn
+            # loss['CE loss_nn'] = loss_nn
 
             optim_Net.zero_grad()
             scaler.scale(loss_all).backward()
@@ -366,16 +356,17 @@ def train():
                 msg += ',{}={:.5f}'.format(k, v)
             msg = msg + str(',lr=' + str(showLR(optim_Net)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
-            msg = msg + str(',best_acc_train={:2f}'.format(best_acc_train))
+            # msg = msg + str(',best_acc_train={:2f}'.format(best_acc_train))
             print(msg)
 
             # or i_iter == 0
             if i_iter == len(trainloader) - 1:
-                acc, pinyin_acc, msg = test(0)
-                trainacc, pinyin_trainacc, trainmsg = test(1)
+                acc, msg = test(0)
+                writer.add_scalar("acc", acc, epoch + 1)
 
                 if (acc > best_acc):
-                    savename = '{}_weight_pinyin_encode_decode.pt'.format(args.save_prefix)
+                    writer.add_scalar("best_acc", best_acc, epoch + 1)
+                    savename = '{}_last.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
@@ -386,7 +377,7 @@ def train():
 
                 if (tot_iter != 0):
                     best_acc = max(acc, best_acc)
-                    best_acc_train = max(trainacc, best_acc_train)
+                    # best_acc_train = max(trainacc, best_acc_train)
 
             tot_iter += 1
         scheduler_net.step()
@@ -446,8 +437,8 @@ def computeACC(pinyin, pinyinlable, target_length, truelabel):
             Tn_2 += 1
             count += 1
 
-    print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
-                                                                (Tp + Tn_1 + Tn_2)))
+    # print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
+    #                                                             (Tp + Tn_1 + Tn_2)))
     return Tp / (Tp + Tn_1 + Tn_2)
 
 
@@ -691,4 +682,8 @@ if (__name__ == '__main__'):
         print(f'acc={acc}')
         exit()
     train()
+    try:
+        writer.close()
+    except BaseException:
+        writer.close()
     exit()

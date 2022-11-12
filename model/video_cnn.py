@@ -7,7 +7,6 @@ import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 from .CBAM import ChannelAttention, SpatialAttention
-from .RFB import BasicRFB
 
 
 class Conv_CBAM(nn.Module):

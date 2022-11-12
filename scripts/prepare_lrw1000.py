@@ -29,9 +29,9 @@ class LRW1000_Dataset(Dataset):
         with open(index_file, 'r', encoding="utf-8") as f:
             lines.extend([line.strip().split(',') for line in f.readlines()])
         # local
-        # self.data_root = 'E:\LRW\images\LRW1000_Public\images'
+        self.data_root = 'E:\LRW\images\LRW1000_Public\images'
         # 3080
-        self.data_root = '/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/images'
+        # self.data_root = '/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/images'
         # 3090
         # self.data_root = '/home/czg/dataset/LRW/images/LRW1000_Public/images'
         #
@@ -331,9 +331,9 @@ class LRW1000_Dataset(Dataset):
             audio_file = self.va_dict.get(item)
             assert (audio_file != None)
             # local
-            # audio_file = 'E:/LRW/audio/' + audio_file + '.npy'
+            audio_file = 'E:/LRW/audio/' + audio_file + '.npy'
             # 3080
-            audio_file = '/home/mingwu/workspace_czg/data/LRW/LRW/audio/' + audio_file + '.npy'
+            # audio_file = '/home/mingwu/workspace_czg/data/LRW/LRW/audio/' + audio_file + '.npy'
             # 3090
             # audio_file = '/home/czg/dataset/LRW/audio/' + audio_file + '.npy'
             if (os.path.exists(audio_file)):
@@ -349,9 +349,9 @@ class LRW1000_Dataset(Dataset):
 
     def get_video_audio_map(self):
         # local
-        # self.anno = 'E:/LRW/info/all_audio_video.txt'
+        self.anno = 'E:/LRW/info/all_audio_video.txt'
         # 3080
-        self.anno = '/home/mingwu/workspace_czg/data/LRW/LRW/info/all_audio_video.txt'
+        # self.anno = '/home/mingwu/workspace_czg/data/LRW/LRW/info/all_audio_video.txt'
         # 3090
         # self.anno = '/home/czg/dataset/LRW/info/all_audio_video.txt'
         with open(self.anno, 'r', encoding="utf-8") as f:
@@ -492,11 +492,11 @@ if (__name__ == '__main__'):
 
     for subset in ['trn', 'val', 'tst']:
         # local
-        # target_dir = f'E:/LRW1000_Public_pkl_jpeg/{subset}'
-        # index_file = f'E:/LRW/info/{subset}_1000.txt'
+        target_dir = f'E:/LRW1000_Public_pkl_jpeg/{subset}'
+        index_file = f'E:/LRW/info/{subset}_1000.txt'
         # 3080
-        target_dir = f'/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/{subset}'
-        index_file = f'/home/mingwu/workspace_czg/data/LRW/LRW/info/{subset}_1000.txt'
+        # target_dir = f'/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/{subset}'
+        # index_file = f'/home/mingwu/workspace_czg/data/LRW/LRW/info/{subset}_1000.txt'
         # 3090
         # target_dir = f'/home/czg/dataset/LRW1000_Phome/{subset}'
         # target_dir = f'/home/czg/dataset/LRW1000_Public_pkl_jpeg/{subset}'

@@ -84,10 +84,11 @@ from .video_cnn import ResNet, BasicBlock, VideoCNN
 
 
 class LipNet_Pinyin(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super(LipNet_Pinyin, self).__init__()
+
+        self.args = args
         self.video_cnn = VideoCNN(se=True)
-        # self.gru = nn.GRU(513, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
         self.videoEncode = VideoEncoder(enc_input=513, hidden_size=512, dropout=0.5, num_layers=1, LSTMorGRU=1)
         # self.pinyinEncode = PinyinEncoder(in_features=1024, hidden_size=1024, num_layers=1, GRUorLSTM=0)
         self.pinyinEncode = Encoder(input_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512, dropout=0.5,
@@ -97,14 +98,16 @@ class LipNet_Pinyin(nn.Module):
         # self.characterDecode = CharacterDecoder(in_features=2048, hidden_size=1024, num_layers=1, GRUorLSTM=0)
         self.PinyinMLP = MLP(in_features=512, out_features=48 + 1, layer=0)
         # self.CharacterMLP = MLP(in_features=1024 * 2, out_features=1000, layer=0)
-        self.v_cls = nn.Linear(1024, 1000)
+        self.v_cls1 = nn.Linear(1024, self.args.n_class)
         self.PSoft = nn.LogSoftmax(dim=0)
         self.CSoft = nn.Softmax(dim=0)
         self.dropout = nn.Dropout(p=0.5)
         self.LN = nn.LayerNorm([512])
+
         self.BorderCon = nn.Conv1d(1, 1, kernel_size=5, stride=1, padding=2, bias=False)
 
-    def forward(self, x, tgt, src_lengths, teacher_forcing_ratio=0.5, border=None):  # border  Batch_size,T
+    def forward(self, x, tgt, src_st, src_ed, teacher_forcing_ratio=0.1, border=None):  # border  Batch_size,T
+
         B, T, C, H, W = x.size()[:]
         x = self.video_cnn(x)
         x = self.LN(x)
@@ -112,13 +115,12 @@ class LipNet_Pinyin(nn.Module):
             border = border.unsqueeze(1)
             border = self.BorderCon(border)
             border = border.squeeze(1)
-        # border = self.con(src_lengths[:, :, None, None, None])
         Xve, prev_hidden = self.videoEncode(torch.cat([x, border[:, :, None]], -1))
         # Xve, _ = self.gru(torch.cat([x, border[:, :, None]], -1))
         # Xve = self.dropout(Xve)
-        Pp = self.PSoft(self.PinyinMLP(Xve))
+        # Pp = self.PSoft(self.PinyinMLP(Xve))
 
-        Xpd, prev_hidden = self.pinyinEncode(Xve, src_lengths)
+        Xpd, prev_hidden = self.pinyinEncode(Xve)
         # Xpd = self.dropout(Xpd)
         # Xcd = self.characterDecode(Xve)
         # Xcd = self.dropout(Xcd)
@@ -127,12 +129,12 @@ class LipNet_Pinyin(nn.Module):
         dec_input = tgt[:, 0]
         dec_outputs = torch.zeros(B, tgt_len, 512)
         for t in range(tgt_len):
-            dec_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, Xpd, src_lengths)
+            dec_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, Xpd, src_st, src_ed)
             dec_outputs[:, t, :] = dec_output
             teacher_force = random.random() < teacher_forcing_ratio
             top1 = dec_output.argmax(1)
             dec_input = tgt[:, t] if teacher_force else top1
-        Pc = self.v_cls(torch.cat([Xve, dec_outputs.cuda()], -1)).mean(1)
+        Pc = self.v_cls1(torch.cat([Xve, dec_outputs.cuda()], -1)).mean(1)
 
         # PinyinInput = Xpd
         # Ype = self.pinyinEncode(PinyinInput)
@@ -150,7 +152,7 @@ class LipNet_Pinyin(nn.Module):
         # CharacterInput = CharacterInput.view(B, -1)
         # Pc = self.CharacterMLP(CharacterInput).mean(1)
         # Pc = self.v_cls(Xve).mean(1)
-        return Pp, Pc
+        return Pc
 
     def PinyinPrediction(self, x):
         Xve = self.videoEncode(x)
@@ -463,7 +465,7 @@ class Encoder(nn.Module):
         # self.linear = nn.Linear(enc_hid_dim * 2, dec_hid_dim * 2)
         # self.relu = nn.ReLU()
 
-    def forward(self, enc_input, text_lengths):
+    def forward(self, enc_input):
         # enc_input = self.embedding(enc_input)
         embedded = self.dropout(enc_input)
         # embedded = pack_padded_sequence(embedded, text_lengths.cpu().int(), batch_first=True, enforce_sorted=False)
@@ -486,13 +488,13 @@ class Decoder(nn.Module):
         self.linear = nn.Linear(enc_hid_dim + 2 * dec_hid_dim + emb_dim, output_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, dec_input, prev_hidden, enc_output, text_lengths):
+    def forward(self, dec_input, prev_hidden, enc_output, src_st, src_ed):
         # dec_input = [batch_size]
         # prev_hidden = [batch_size, hidden_size]
         # enc_output = [batch_size, src_len, hidden_size]
         dec_input = dec_input.unsqueeze(1)
         embedded = self.embedding(dec_input.long())
-        a = self.attention(embedded, enc_output, text_lengths).unsqueeze(1)  # [batch_size, 1, src_len]
+        a = self.attention(embedded, enc_output, src_st, src_ed).unsqueeze(1)  # [batch_size, 1, src_len]
         c = torch.bmm(a, enc_output)  # [batch_size, 1, hidden_size]
         gru_input = torch.cat([embedded, c], dim=2)
         dec_output, dec_hidden = self.gru(gru_input, prev_hidden)
@@ -508,7 +510,7 @@ class Attention(nn.Module):
         self.v = nn.Linear(dec_hid_dim, 1)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, dec_input, enc_output, text_lengths):
+    def forward(self, dec_input, enc_output, src_st, src_ed):
         # enc_output = [batch_size, seq_len, hidden_size]
         # dec_input = [batch_size, hidden_size]
         seq_len = enc_output.shape[1]
@@ -517,7 +519,8 @@ class Attention(nn.Module):
         attention = self.v(x).squeeze(-1)
         max_len = enc_output.shape[1]
         # mask = [batch_size, seq_len]
-        mask = torch.arange(max_len).expand(text_lengths.shape[0], max_len).cuda() >= text_lengths.cuda().unsqueeze(1)
+        length = torch.arange(max_len).expand(src_st.shape[0], max_len).cuda()
+        mask = (length >= src_ed.cuda().unsqueeze(1)) != (length < src_st.cuda().unsqueeze(1))
         attention.masked_fill_(mask.cuda(), float('-inf'))
         return self.softmax(attention)  # [batch, seq_len]
 

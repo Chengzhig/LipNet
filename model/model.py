@@ -1,6 +1,5 @@
 import argparse
 from functools import partial
-from model.VIT import VisionTransformer
 from .video_cnn import VideoCNN
 import torch
 import torch.nn as nn
