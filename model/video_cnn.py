@@ -153,21 +153,21 @@ class VideoCNN(nn.Module):
         # resnet
         self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se)
         self.dropout = nn.Dropout(p=0.5)
-        self.uppool = nn.Sequential(
-            nn.Conv3d(1, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False),
-            nn.BatchNorm3d(64),
-            nn.PReLU(),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-        )
+        # self.uppool = nn.Sequential(
+        #     nn.Conv3d(1, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False),
+        #     nn.BatchNorm3d(64),
+        #     nn.PReLU(),
+        #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        # )
         # backend_gru
         # initialize
         self._initialize_weights()
 
     def visual_frontend_forward(self, x):
         x = x.transpose(1, 2)
-        res = self.uppool(x)
+        # res = self.uppool(x)
         x = self.frontend(x)
-        x = res + x
+        # x = res + x
         x = x.transpose(1, 2)
         x = x.contiguous()
         x = x.view(-1, 64, x.size(3), x.size(4))

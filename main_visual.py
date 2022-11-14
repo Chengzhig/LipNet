@@ -98,17 +98,18 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(NETModel, weight.get('video_model'))
 
-pretrained_dict = torch.load(
-    "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
-# pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode.pt")
-model_dict = NETModel.state_dict()
+# pretrained_dict = torch.load(
+#     "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
+pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_last.pt")
+# model_dict = NETModel.state_dict()
 # 1. filter out unnecessary keys
-pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
+# pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
 # pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
 # 2. overwrite entries in the existing state dict
-model_dict.update(pretrained_dict)
-NETModel.load_state_dict(model_dict)
+# model_dict.update(pretrained_dict)
+# NETModel.load_state_dict(model_dict)
 
+load_missing(NETModel, pretrained_dict.get('NETModel'))
 NETModel = parallel_model(NETModel)
 
 
@@ -220,7 +221,7 @@ def test(Istrain=0):
             border = input.get('duration').cuda(non_blocking=True).float()
             src_st = input.get('src_st').cuda(non_blocking=True)
             src_ed = input.get('src_ed').cuda(non_blocking=True)
-            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
             # target_length = input.get('target_lengths')
 
             with autocast():
@@ -296,7 +297,6 @@ def train():
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
-
             src_st = input.get('src_st').cuda(non_blocking=True)
             src_ed = input.get('src_ed').cuda(non_blocking=True)
             # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
@@ -338,7 +338,7 @@ def train():
                     loss_bp = loss_fn(character, label)
 
             loss_all = loss_bp
-            writer.add_scalar("loss", loss_all, i_iter * (epoch + 1))
+            # writer.add_scalar("loss", loss_all, i_iter * (epoch + 1))
             # loss_all = loss_bp
             loss['CE loss_bp'] = loss_bp
             # loss['CE loss_nn'] = loss_nn
@@ -356,12 +356,13 @@ def train():
                 msg += ',{}={:.5f}'.format(k, v)
             msg = msg + str(',lr=' + str(showLR(optim_Net)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
-            # msg = msg + str(',best_acc_train={:2f}'.format(best_acc_train))
+            msg = msg + str(',best_acc_train={:2f}'.format(best_acc_train))
             print(msg)
 
             # or i_iter == 0
             if i_iter == len(trainloader) - 1:
                 acc, msg = test(0)
+                train_acc, train_msg = test(1)
                 writer.add_scalar("acc", acc, epoch + 1)
 
                 if (acc > best_acc):
@@ -377,7 +378,7 @@ def train():
 
                 if (tot_iter != 0):
                     best_acc = max(acc, best_acc)
-                    # best_acc_train = max(trainacc, best_acc_train)
+                    best_acc_train = max(train_acc, best_acc_train)
 
             tot_iter += 1
         scheduler_net.step()
