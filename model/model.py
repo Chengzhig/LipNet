@@ -32,22 +32,42 @@ class MLP(nn.Module):
 
 class VideoModel(nn.Module):
 
-    def __init__(self, args, dropout=0.2):
+    def __init__(self, args, dropout=0.5):
         super(VideoModel, self).__init__()
 
-        self.model = VisionTransformer(img_size=88, in_chans=1, num_classes=1000, patch_size=16, embed_dim=768,
-                                       depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-                                       norm_layer=partial(nn.LayerNorm, eps=1e-6), drop_rate=0., attn_drop_rate=0.,
-                                       drop_path_rate=0.1, num_frames=8, attention_type='divided_space_time')
         self.args = args
 
-    def forward(self, x):
-        x = self.model(x)
-        return x
+        self.video_cnn = VideoCNN(se=self.args.se)
+        if (self.args.border):
+            in_dim = 512 + 1
+        else:
+            in_dim = 512
+        self.gru = nn.GRU(in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
 
-    def _initialize_weights(self):
-        for name, param in self.gru.named_parameters():
-            nn.init.uniform_(param, -0.1, 0.1)
+        self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, v, border=None):
+        self.gru.flatten_parameters()
+
+        if (self.training):
+            with autocast():
+                f_v = self.video_cnn(v)
+                f_v = self.dropout(f_v)
+            f_v = f_v.float()
+        else:
+            f_v = self.video_cnn(v)
+            f_v = self.dropout(f_v)
+
+        if (self.args.border):
+            border = border[:, :, None]
+            h, _ = self.gru(torch.cat([f_v, border], -1))
+        else:
+            h, _ = self.gru(f_v)
+
+        y_v = self.v_cls(self.dropout(h)).mean(1)
+
+        return y_v
 
 
 class VideoModel1(nn.Module):

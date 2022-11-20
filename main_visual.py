@@ -73,7 +73,7 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-NETModel = LipNet_Pinyin().cuda()
+video_model = VideoModel(args).cuda()
 
 
 # video_model = VideoModel(args).cuda()
@@ -101,15 +101,19 @@ def load_missing(model, pretrained_dict):
 
 
 lr = args.batch_size / 32.0 / torch.cuda.device_count() * args.lr
-optim_Net = optim.Adam(NETModel.parameters(), lr=lr, weight_decay=1e-4)
-scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_Net, T_max=args.max_epoch, eta_min=5e-6)
+optim_video = optim.Adam(video_model.parameters(), lr=lr, weight_decay=1e-4)
+scheduler_net = optim.lr_scheduler.CosineAnnealingLR(optim_video, T_max=args.max_epoch, eta_min=5e-6)
 
 if (args.weights is not None):
     print('load weights')
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
-    load_missing(NETModel, weight.get('video_model'))
+    load_missing(video_model, weight.get('video_model'))
 
-NETModel = parallel_model(NETModel)
+weight = torch.load(
+    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/_DetNet.pt',
+    map_location=torch.device('cpu'))
+load_missing(video_model, weight.get('video_model'))
+video_model = parallel_model(video_model)
 
 
 # video_model = parallel_model(video_model)
@@ -191,34 +195,35 @@ def test():
         t1 = time.time()
 
         for (i_iter, input) in enumerate(loader):
-            NETModel.eval()
+            video_model.eval()
 
             tic = time.time()
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True)
-            target = label
             total = total + video.size(0)
-            # border = input.get('duration').cuda(non_blocking=True).float()
-            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-            # target_length = input.get('target_lengths')
+            names = input.get('name')
+            border = input.get('duration').cuda(non_blocking=True).float()
 
             with autocast():
-                pinyin, character = NETModel(video)
+                if (args.border):
+                    y_v = video_model(video, border)
+                else:
+                    y_v = video_model(video)
 
-            p_acc.extend((character.argmax(-1) == target).cpu().numpy().tolist())
+            v_acc.extend((y_v.argmax(-1) == label).cpu().numpy().tolist())
             # v_acc.append(Tp / (Tp + Tn_1 + Tn_2))
 
             toc = time.time()
             if (i_iter % 10 == 0):
                 msg = ''
-                # msg = add_msg(msg, ' v_acc={:.5f}', Tp / (Tp + Tn_1 + Tn_2))
-                msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
+                msg = add_msg(msg, ' v_acc={:.5f}',  np.array(v_acc).reshape(-1).mean())
+                # msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
 
                 print(msg)
 
-        # acc = float(np.array(v_acc).mean())
-        acc = float(np.array(p_acc).reshape(-1).mean())
+        acc = float(np.array(v_acc).reshape(-1).mean())
+        # acc = float(np.array(p_acc).reshape(-1).mean())
         msg = 'v_acc_{:.5f}_'.format(acc)
 
         return acc, msg
@@ -280,15 +285,12 @@ def train():
         for (i_iter, input) in enumerate(loader):
             tic = time.time()
 
-            NETModel.train()
-
+            video_model.train()
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
-            # border = input.get('duration').cuda(non_blocking=True).float()
-            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            border = input.get('duration').cuda(non_blocking=True).float()
 
             loss = {}
-            crition1 = torch.nn.BCEWithLogitsLoss()
 
             if (args.label_smooth):
                 loss_fn = lsr
@@ -296,26 +298,35 @@ def train():
                 loss_fn = nn.CrossEntropyLoss()
 
             with autocast():
-                pinyin, character = NETModel(video)
-                ctc_loss = nn.CTCLoss(blank=28, reduction='mean')
-                log_probs = pinyin.float()
-                log_probs = log_probs.transpose(0, 1)
-                targets = pinyinlable
-                # preds_size = torch.IntTensor([log_probs.size(0)] * args.batch_size)
-                input_lengths = torch.full((log_probs.shape[1],), log_probs.shape[0], dtype=torch.long)
-                # target_lengths = torch.full((args.batch_size,), 40, dtype=torch.long)
-                target_lengths = input.get('target_lengths').cuda(non_blocking=True).int()
+                if (args.mixup):
+                    lambda_ = np.random.beta(alpha, alpha)
+                    index = torch.randperm(video.size(0)).cuda(non_blocking=True)
 
-                loss_bp = ctc_loss(log_probs, targets, input_lengths, target_lengths)
-                loss_nn = loss_fn(character, label)
+                    mix_video = lambda_ * video + (1 - lambda_) * video[index, :]
+                    mix_border = lambda_ * border + (1 - lambda_) * border[index, :]
 
-            loss_all = loss_nn + loss_bp
-            loss['CE loss_bp'] = loss_bp
-            loss['CE loss_nn'] = loss_nn
+                    label_a, label_b = label, label[index]
 
-            optim_Net.zero_grad()
-            scaler.scale(loss_all).backward()
-            scaler.step(optim_Net)
+                    if (args.border):
+                        y_v = video_model(mix_video, mix_border)
+                    else:
+                        y_v = video_model(mix_video)
+
+                    loss_bp = lambda_ * loss_fn(y_v, label_a) + (1 - lambda_) * loss_fn(y_v, label_b)
+
+                else:
+                    if (args.border):
+                        y_v = video_model(video, border)
+                    else:
+                        y_v = video_model(video)
+
+                    loss_bp = loss_fn(y_v, label)
+
+            loss['CE V'] = loss_bp
+
+            optim_video.zero_grad()
+            scaler.scale(loss_bp).backward()
+            scaler.step(optim_video)
             scaler.update()
 
             toc = time.time()
@@ -324,7 +335,7 @@ def train():
                                                              (toc - tic) * (len(loader) - i_iter) / 3600.0)
             for k, v in loss.items():
                 msg += ',{}={:.5f}'.format(k, v)
-            msg = msg + str(',lr=' + str(showLR(optim_Net)))
+            msg = msg + str(',lr=' + str(showLR(optim_video)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
             msg = msg + str(',best_acc_a={:2f}'.format(best_acc_a))
             print(msg)
@@ -334,13 +345,13 @@ def train():
                 acc, msg = test()
 
                 if (acc > best_acc):
-                    savename = '{}_weight_pinyin.pt'.format(args.save_prefix)
+                    savename = '{}_DetNet.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
                     torch.save(
                         {
-                            'NETModel': NETModel.module.state_dict(),
+                            'video_model': video_model.module.state_dict(),
                         }, savename)
 
                 if (tot_iter != 0):
@@ -351,7 +362,7 @@ def train():
         scheduler_net.step()
 
 
-def computeACC(pinyin,pinyinlable, target_length):
+def computeACC(pinyin, pinyinlable, target_length):
     count = 0
     Tp = 0
     Tn_1 = 0
@@ -404,6 +415,7 @@ def computeACC(pinyin,pinyinlable, target_length):
                                                                         (Tp + Tn_1 + Tn_2)))
             y_v1 = y_v1.float()
     return Tp / (Tp + Tn_1 + Tn_2)
+
 
 def getLable(i):
     dict = [" C", " a", "ai", " ai ", " an", "  an jian", "  an quan", " an zhao", "  ba", "  ba li", "  ba xi",
