@@ -4,12 +4,12 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 import torch.nn.functional as F
 from torchvision.models.resnet import Bottleneck
 
 from .CBAM import ChannelAttention, SpatialAttention
-from .RFB import BasicRFB
+import timm
+from timm.models.resnest import resnest14d
 
 
 class Conv_CBAM(nn.Module):
@@ -151,7 +151,7 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.PReLU()
+        self.relu = nn.ReLU()
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
@@ -434,30 +434,28 @@ class VideoCNN(nn.Module):
 
         # frontend3D
         self.frontend3D = nn.Sequential(
-            nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
+            nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
+            nn.BatchNorm3d(32),
+            nn.ReLU(True),
+            nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+            nn.BatchNorm3d(32),
+            nn.ReLU(True),
+            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
             nn.BatchNorm3d(64),
             nn.ReLU(True),
             nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         )
+
         # resnet
-        # self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se)
-        self.detNet = DetNet(Bottleneck, [3, 4, 6, 3, 3])
-        detnet = detnet59(pretrained=True)
-        self.layer1 = nn.Sequential(detnet.layer1)
-        self.layer2 = nn.Sequential(detnet.layer2)
-        self.layer3 = nn.Sequential(detnet.layer3)
-        self.layer4 = nn.Sequential(detnet.layer4)
-        self.layer5 = nn.Sequential(detnet.layer5)  # add one layer, for c6s
-        self.layer6 = nn.Sequential(
-            *[nn.Conv2d(1024, 256, kernel_size=1),
-              nn.BatchNorm2d(256),
-              nn.ReLU(inplace=True),
-              nn.Conv2d(256, 512, kernel_size=3, padding=1, stride=2),
-              nn.BatchNorm2d(512),
-              nn.ReLU(inplace=True)]
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.bn = nn.BatchNorm1d(512)
+        self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se)
+        # self.model = MobileNetV2()
+        # self.resnest26d = resnest14d()
+        # print(self.resnest26d)
+        # self.layer1 = nn.Sequential(self.resnest26d.layer1)
+        # self.layer2 = nn.Sequential(self.resnest26d.layer2)
+        # self.layer3 = nn.Sequential(self.resnest26d.layer3)
+        # self.layer4 = nn.Sequential(self.resnest26d.layer4)
+        # self.GlobalAvgPool2d = nn.Sequential(self.resnest26d.global_pool)
 
         # backend_gru
         # initialize
@@ -469,16 +467,13 @@ class VideoCNN(nn.Module):
         x = x.transpose(1, 2)
         x = x.contiguous()
         x = x.view(-1, 64, x.size(3), x.size(4))
-        conv3_3_x = self.layer1(x)
-        conv4_3_x = self.layer2(conv3_3_x)
-        conv5_3_x = self.layer3(conv4_3_x)
-        fc7_x = self.layer4(conv5_3_x)
-        conv6_2_x = self.layer5(fc7_x)
-        conv7_2_x = self.layer6(conv6_2_x)
-        x = self.avgpool(conv7_2_x)
+        x = self.resnet18(x)
+        # x = self.layer1(x)
+        # x = self.layer2(x)
+        # x = self.layer3(x)
+        # x = self.layer4(x)
+        # x = self.GlobalAvgPool2d(x)
         x = x.view(x.size(0), -1)
-        x = self.bn(x)
-
         return x
 
     def forward(self, x):
@@ -487,7 +482,7 @@ class VideoCNN(nn.Module):
         x = self.visual_frontend_forward(x)
 
         # x = self.dropout(x)
-        feat = x.view(b, -1, 512)
+        # feat = x.view(b, -1, 512)
 
         x = x.view(b, -1, 512)
         return x

@@ -109,14 +109,10 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-weight = torch.load(
-    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/_DetNet.pt',
+weight = torch.load('/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt',
     map_location=torch.device('cpu'))
 load_missing(video_model, weight.get('video_model'))
 video_model = parallel_model(video_model)
-
-
-# video_model = parallel_model(video_model)
 
 
 def dataset2dataloader(dataset, batch_size, num_workers, shuffle=True):
@@ -171,10 +167,13 @@ word_chars = codecs.open(data_path + 'wordChars.txt', 'r', 'utf8').read()
 # wbs = WordBeamSearch(28, 'NGrams', 0.0, corpus.encode('utf8'), chars.encode('utf8'),
 #                      word_chars.encode('utf8'))
 
-
-def test():
+def test(istrain=0):
+    tmprandom = random.randint(1, 20)
     with torch.no_grad():
-        dataset = Dataset('val', args)
+        if istrain == 1:
+            dataset = Dataset('train', args)
+        else:
+            dataset = Dataset('val', args)
         print('Start Testing, Data Length:', len(dataset))
         loader = dataset2dataloader(dataset, args.batch_size, args.num_workers, shuffle=False)
 
@@ -195,6 +194,8 @@ def test():
         t1 = time.time()
 
         for (i_iter, input) in enumerate(loader):
+            if istrain == 1 and i_iter % 20 != tmprandom:
+                continue
             video_model.eval()
 
             tic = time.time()
@@ -216,7 +217,7 @@ def test():
             toc = time.time()
             if (i_iter % 10 == 0):
                 msg = ''
-                msg = add_msg(msg, ' v_acc={:.5f}',  np.array(v_acc).reshape(-1).mean())
+                msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
                 # msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
 
@@ -343,9 +344,9 @@ def train():
             # or i_iter == 0
             if i_iter == len(loader) - 1:
                 acc, msg = test()
-
+                # acc_a, msg_a = test(1)
                 if (acc > best_acc):
-                    savename = '{}_DetNet.pt'.format(args.save_prefix)
+                    savename = '{}front3d_resnet.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
