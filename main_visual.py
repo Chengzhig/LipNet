@@ -24,9 +24,6 @@ from model.Mymodel import LipNet_Pinyin
 from model.TCN import Lipreading
 import codecs
 import torchvision.transforms as transforms
-from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
 
 torch.backends.cudnn.benchmark = True
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -109,8 +106,15 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-weight = torch.load('/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt',
-    map_location=torch.device('cpu'))
+    # model_weight_path = "/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt"
+    # model.load_state_dict(torch.load(model_weight_path))
+    # print(model)
+
+weight = torch.load('/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023_2.pt',
+                    map_location=torch.device('cpu'))
+# weight = torch.load(
+#     '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt',
+#     map_location=torch.device('cpu'))
 load_missing(video_model, weight.get('video_model'))
 video_model = parallel_model(video_model)
 
@@ -207,9 +211,9 @@ def test(istrain=0):
 
             with autocast():
                 if (args.border):
-                    y_v = video_model(video, border)
+                    y_v, _ = video_model(video, border)
                 else:
-                    y_v = video_model(video)
+                    y_v, _ = video_model(video)
 
             v_acc.extend((y_v.argmax(-1) == label).cpu().numpy().tolist())
             # v_acc.append(Tp / (Tp + Tn_1 + Tn_2))
@@ -241,16 +245,27 @@ def loss_fn(pred, target):
     return -(target * torch.log(pred) + (1 - target) * torch.log(1 - pred)).sum()
 
 
-def visualize_feature(x, model, layers=[0, 1]):
-    net = nn.Sequential(*list(model.children())[:layers[0]])
-    img = net(x)
-    transform1 = transforms.ToPILImage(mode='L')
-    # img = torch.cpu().clone()
-    for i in range(img.size(0)):
-        image = img[i]
-        # print(image.size())
-        image = transform1(np.uint8(image.numpy().transpose(1, 2, 0)))
-        image.show()
+def visualize_feature(model, x, border=None):
+    # forward
+    im = x.cpu().detach().numpy()[0, 20, :, :, :]
+    im = np.transpose(im, [1, 2, 0])
+    plt.figure()
+    plt.imshow(im[:, :, 0], cmap='gray')
+    plt.show()
+    _, out_put = model(x, border)
+    for feature_map in out_put:
+        print(feature_map.size())
+        # [N, T, C, H, W] -> [C, H, W]
+        im = feature_map.cpu().detach().numpy()[0, 20, :, :, :]
+        # [C, H, W] -> [H, W, C]
+        im = np.transpose(im, [1, 2, 0])
+        # show top 12 feature maps
+        plt.figure()
+        for i in range(64):
+            ax = plt.subplot(8, 8, i + 1)
+            # [H, W, C]
+            plt.imshow(im[:, :, i], cmap='gray')
+        plt.show()
 
 
 def train():
@@ -291,6 +306,8 @@ def train():
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
 
+            visualize_feature(video_model, video, border)
+
             loss = {}
 
             if (args.label_smooth):
@@ -309,17 +326,17 @@ def train():
                     label_a, label_b = label, label[index]
 
                     if (args.border):
-                        y_v = video_model(mix_video, mix_border)
+                        y_v, _ = video_model(mix_video, mix_border)
                     else:
-                        y_v = video_model(mix_video)
+                        y_v, _ = video_model(mix_video)
 
                     loss_bp = lambda_ * loss_fn(y_v, label_a) + (1 - lambda_) * loss_fn(y_v, label_b)
 
                 else:
                     if (args.border):
-                        y_v = video_model(video, border)
+                        y_v, _ = video_model(video, border)
                     else:
-                        y_v = video_model(video)
+                        y_v, _ = video_model(video)
 
                     loss_bp = loss_fn(y_v, label)
 

@@ -8,8 +8,6 @@ import torch.nn.functional as F
 from torchvision.models.resnet import Bottleneck
 
 from .CBAM import ChannelAttention, SpatialAttention
-import timm
-from timm.models.resnest import resnest14d
 
 
 class Conv_CBAM(nn.Module):
@@ -399,14 +397,21 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        outputs = []
+        B, T, C, W, H = x.size()[:]
+        x = x.view(-1, 64, x.size(3), x.size(4))
         x = self.layer1(x)
+        outputs.append(x.view(B, T, -1, x.size(2), x.size(3)))
         x = self.layer2(x)
+        outputs.append(x.view(B, T, -1, x.size(2), x.size(3)))
         x = self.layer3(x)
+        outputs.append(x.view(B, T, -1, x.size(2), x.size(3)))
         x = self.layer4(x)
+        outputs.append(x.view(B, T, -1, x.size(2), x.size(3)))
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.bn(x)
-        return x
+        return x, outputs
 
 
 class FEM(nn.Module):
@@ -433,14 +438,21 @@ class VideoCNN(nn.Module):
         super(VideoCNN, self).__init__()
 
         # frontend3D
+        # self.frontend3D = nn.Sequential(
+        #     nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+        #     nn.BatchNorm3d(64),
+        #     nn.ReLU(True),
+        #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        # )
+
         self.frontend3D = nn.Sequential(
-            nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+            nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64),
             nn.ReLU(True),
             nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
@@ -462,30 +474,33 @@ class VideoCNN(nn.Module):
         self._initialize_weights()
 
     def visual_frontend_forward(self, x):
+        outputs = []
         x = x.transpose(1, 2)
         x = self.frontend3D(x)
         x = x.transpose(1, 2)
+        outputs.append(x)
         x = x.contiguous()
-        x = x.view(-1, 64, x.size(3), x.size(4))
-        x = self.resnet18(x)
+        # x = x.view(-1, 64, x.size(3), x.size(4))
+        x, tmpOutput = self.resnet18(x)
+        outputs.extend(tmpOutput)
         # x = self.layer1(x)
         # x = self.layer2(x)
         # x = self.layer3(x)
         # x = self.layer4(x)
         # x = self.GlobalAvgPool2d(x)
         x = x.view(x.size(0), -1)
-        return x
+        return x, outputs
 
     def forward(self, x):
         b, t = x.size()[:2]
 
-        x = self.visual_frontend_forward(x)
+        x, outputs = self.visual_frontend_forward(x)
 
         # x = self.dropout(x)
         # feat = x.view(b, -1, 512)
 
         x = x.view(b, -1, 512)
-        return x
+        return x, outputs
 
     def _initialize_weights(self):
         for m in self.modules():

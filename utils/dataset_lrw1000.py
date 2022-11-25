@@ -33,9 +33,9 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/trn'
+            # self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/trn'
             # 3090
-            # self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/trn'
+            self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/trn'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/trn'
         # elif (self.phase == 'val'):
         #     self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/val'
@@ -43,9 +43,9 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/tst'
+            # self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/tst'
             # 3090
-            # self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/tst'
+            self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/tst'
 
         self.data = glob.glob(os.path.join(self.index_root, '*.pkl'))
@@ -126,8 +126,8 @@ class LRW1000_Dataset(Dataset):
         video = pkl.get('video')
         video = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in video]
         video = np.stack(video, 0)
-        video[:st, :, :, :] = np.zeros((st, 96, 96, 1)).astype(video.dtype)
-        video[ed:, :, :, :] = np.zeros((40 - ed, 96, 96, 1)).astype(video.dtype)
+        # video[:st, :, :, :] = np.zeros((st, 96, 96, 1)).astype(video.dtype)
+        # video[ed:, :, :, :] = np.zeros((40 - ed, 96, 96, 1)).astype(video.dtype)
         video = video[:, :, :, 0]
         if (self.phase == 'train'):
             video = RandomCrop(video, (88, 88))
