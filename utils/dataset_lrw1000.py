@@ -15,8 +15,6 @@ from .cvtransforms import *
 import torch
 from collections import defaultdict
 
-# from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
-
 
 jpeg = TurboJPEG()
 
@@ -33,19 +31,17 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            # self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/trn'
+            self.index_root = '/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg/trn'
             # 3090
-            self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/trn'
+            # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/trn'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/trn'
-        # elif (self.phase == 'val'):
-        #     self.index_root = '/home/czg/dataset/LRW1000_Public_pkl_jpeg/val'
         else:
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            # self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/tst'
+            self.index_root = '/home/mingwu/workspace_chj/lipnet/learn-an-effective-lip-reading-model-without-pains/LRW1000_Public_pkl_jpeg/tst'
             # 3090
-            self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
+            # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/tst'
 
         self.data = glob.glob(os.path.join(self.index_root, '*.pkl'))
@@ -126,8 +122,6 @@ class LRW1000_Dataset(Dataset):
         video = pkl.get('video')
         video = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in video]
         video = np.stack(video, 0)
-        # video[:st, :, :, :] = np.zeros((st, 96, 96, 1)).astype(video.dtype)
-        # video[ed:, :, :, :] = np.zeros((40 - ed, 96, 96, 1)).astype(video.dtype)
         video = video[:, :, :, 0]
         if (self.phase == 'train'):
             video = RandomCrop(video, (88, 88))
@@ -136,20 +130,20 @@ class LRW1000_Dataset(Dataset):
             video = CenterCrop(video, (88, 88))
         pkl['video'] = torch.FloatTensor(video)[:, None, ...] / 255.0
 
-        t = 0
-        for item in pkl['pinyinlable']:
-            if item == 0:
-                break
-            t += 1
-        pkl['target_lengths'] = torch.tensor(t).numpy()
+        # t = 0
+        # for item in pkl['pinyinlable']:
+        #     if item == 0:
+        #         break
+        #     t += 1
+        # pkl['target_lengths'] = torch.tensor(t).numpy()
 
-        pinyinlable = np.full((40), 28).astype(pkl['pinyinlable'].dtype)
+        pinyinlable = np.full((1), 28).astype(pkl['pinyinlable'].dtype)
 
-        try:
-            t = pkl['pinyinlable'].shape[0]
-            pinyinlable[:t, ...] = pkl['pinyinlable'].copy()
-        except Exception as e:  # 可以写多个捕获异常
-            print("ValueError")
+        # try:
+        #     t = pkl['pinyinlable'].shape[0]
+        #     pinyinlable[:t, ...] = pkl['pinyinlable'].copy()
+        # except Exception as e:  # 可以写多个捕获异常
+        #     print("ValueError")
         pkl['pinyinlable'] = pinyinlable
 
         return pkl

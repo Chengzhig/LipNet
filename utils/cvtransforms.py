@@ -23,14 +23,10 @@ def TensorRandomCrop(tensor, size):
 def CenterCrop(batch_img, size):
     w, h = batch_img.shape[2], batch_img.shape[1]
     th, tw = size
-    th = th // 2
-    img = np.zeros((batch_img.shape[0], th * 2, tw))
-    x1 = int(round((w - tw)) / 2.)
-    y1 = int(round((h - th)) / 2.)
-    tmpimg = batch_img[:, y1:y1 + th, x1:x1 + tw]
-    for i_iter, input in enumerate(tmpimg):
-        tmp = cv2.resize(input, (th * 2, tw), fx=1, fy=2)
-        img[i_iter, :, :] = tmp
+    img = np.zeros((batch_img.shape[0], th, tw))
+    x1 = int(round((w - tw))/2.)
+    y1 = int(round((h - th))/2.)
+    img = batch_img[:, y1:y1+th, x1:x1+tw]
     return img
 
 
@@ -40,16 +36,6 @@ def RandomCrop(batch_img, size):
     img = np.zeros((batch_img.shape[0], th, tw))
     x1 = random.randint(0, 8)
     y1 = random.randint(0, 8)
-    img = batch_img[:, y1:y1 + th, x1:x1 + tw]
-    return img
-
-
-def Crop(batch_img, size):
-    w, h = batch_img.shape[2], batch_img.shape[1]
-    th, tw = size
-    img = np.zeros((batch_img.shape[0], th, tw))
-    x1 = 15
-    y1 = 15
     img = batch_img[:, y1:y1 + th, x1:x1 + tw]
     return img
 
