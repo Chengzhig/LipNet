@@ -16,11 +16,13 @@ class VideoModel(nn.Module):
 
         self.args = args
 
-        self.video_cnn = VideoCNN(se=self.args.se)
+        self.video_cnn = VideoCNN(se=True, CBAM=False)
         if (self.args.border):
             in_dim = 512 + 1
         else:
             in_dim = 512
+
+        # self.LN = nn.LayerNorm(in_dim)
         self.gru = nn.GRU(in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
 
         self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
@@ -31,22 +33,25 @@ class VideoModel(nn.Module):
 
         if (self.training):
             with autocast():
-                f_v, outputs = self.video_cnn(v)
+                f_v = self.video_cnn(v)
                 f_v = self.dropout(f_v)
             f_v = f_v.float()
         else:
-            f_v, outputs = self.video_cnn(v)
+            f_v = self.video_cnn(v)
             f_v = self.dropout(f_v)
 
         if (self.args.border):
             border = border[:, :, None]
-            h, _ = self.gru(torch.cat([f_v, border], -1))
+            f_v = torch.cat([f_v, border], -1)
+            # f_v = self.LN(f_v)
+            h, _ = self.gru(f_v)
         else:
+            # f_v = self.LN(f_v)
             h, _ = self.gru(f_v)
 
         y_v = self.v_cls(self.dropout(h)).mean(1)
 
-        return y_v, outputs
+        return y_v
 
 
 parser = argparse.ArgumentParser()

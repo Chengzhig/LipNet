@@ -15,11 +15,17 @@ from .cvtransforms import *
 import torch
 from collections import defaultdict
 
-
 jpeg = TurboJPEG()
 
 
 class LRW1000_Dataset(Dataset):
+    # index_file = f'E:/LRW/info/trn_1000.txt'
+    index_file = f'/home/mingwu/workspace_czg/LRW/info/trn_1000.txt'
+    # index_file = f'/home/czg/trn_1000.txt'
+    lines = []
+    with open(index_file, 'r', encoding="utf-8") as f:
+        lines.extend([line.strip().split(',') for line in f.readlines()])
+    pinyins = sorted(np.unique([line[2] for line in lines]))
 
     def __init__(self, phase, args):
 
@@ -39,7 +45,7 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            self.index_root = '/home/mingwu/workspace_chj/lipnet/learn-an-effective-lip-reading-model-without-pains/LRW1000_Public_pkl_jpeg/tst'
+            self.index_root = '/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg/tst'
             # 3090
             # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/tst'

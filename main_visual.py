@@ -1,15 +1,6 @@
-import argparse
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from matplotlib import pyplot as plt
-from sklearn.metrics import accuracy_score
-from torch.cuda import device
 from torch.utils.data import DataLoader
-import math
 import os
-import sys
-import numpy as np
 import time
 from model import *
 import torch.optim as optim
@@ -19,9 +10,6 @@ import shutil
 from LSR import LSR
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
-# from word_beam_search import WordBeamSearch
-from model.Mymodel import LipNet_Pinyin
-from model.TCN import Lipreading
 import codecs
 import torchvision.transforms as transforms
 
@@ -73,12 +61,6 @@ else:
 video_model = VideoModel(args).cuda()
 
 
-# video_model = VideoModel(args).cuda()
-# video_MLP = MLP().cuda()
-
-# print(NETModel)
-
-
 def parallel_model(model):
     model = nn.DataParallel(model)
     return model
@@ -106,15 +88,11 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-    # model_weight_path = "/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt"
-    # model.load_state_dict(torch.load(model_weight_path))
-    # print(model)
-
-weight = torch.load('/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023_2.pt',
-                    map_location=torch.device('cpu'))
-# weight = torch.load(
-#     '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt',
-#     map_location=torch.device('cpu'))
+# weight = torch.load('/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023_2.pt',
+#                     map_location=torch.device('cpu'))
+weight = torch.load(
+    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt',
+    map_location=torch.device('cpu'))
 load_missing(video_model, weight.get('video_model'))
 video_model = parallel_model(video_model)
 
@@ -171,6 +149,43 @@ word_chars = codecs.open(data_path + 'wordChars.txt', 'r', 'utf8').read()
 # wbs = WordBeamSearch(28, 'NGrams', 0.0, corpus.encode('utf8'), chars.encode('utf8'),
 #                      word_chars.encode('utf8'))
 
+def EachClassAcc(classNum, classes):
+    v_acc = []
+    class_correct = list(0. for i in range(classNum))
+    class_total = list(0. for i in range(classNum))
+    with torch.no_grad():
+        dataset = Dataset('val', args)
+        print('Start Testing, Data Length:', len(dataset))
+        loader = dataset2dataloader(dataset, args.batch_size, args.num_workers, shuffle=False)
+        for (i_iter, input) in enumerate(loader):
+            video_model.eval()
+            tic = time.time()
+            video = input.get('video').cuda(non_blocking=True)
+            label = input.get('label').cuda(non_blocking=True)
+            border = input.get('duration').cuda(non_blocking=True).float()
+            y_v = video_model(video, border)
+            c = y_v.argmax(-1) == label
+            for label_idx in range(len(label)):
+                label_single = label[label_idx]
+                class_correct[label_single] += c[label_idx].item()
+                class_total[label_single] += 1
+            v_acc.extend((y_v.argmax(-1) == label).cpu().numpy().tolist())
+            toc = time.time()
+            if (i_iter % 10 == 0):
+                msg = ''
+                msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
+                msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
+                print(msg)
+
+        acc = float(np.array(v_acc).reshape(-1).mean())
+        msg = 'v_acc_{:.5f}_'.format(acc)
+
+        for i in range(classNum):
+            print('Acc of %5s : %2d %%' % (classes[i], 100 * class_correct[i] / class_total[i]))
+
+        return acc, msg
+
+
 def test(istrain=0):
     tmprandom = random.randint(1, 20)
     with torch.no_grad():
@@ -211,18 +226,16 @@ def test(istrain=0):
 
             with autocast():
                 if (args.border):
-                    y_v, _ = video_model(video, border)
+                    y_v = video_model(video, border)
                 else:
-                    y_v, _ = video_model(video)
+                    y_v = video_model(video)
 
             v_acc.extend((y_v.argmax(-1) == label).cpu().numpy().tolist())
-            # v_acc.append(Tp / (Tp + Tn_1 + Tn_2))
 
             toc = time.time()
             if (i_iter % 10 == 0):
                 msg = ''
                 msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
-                # msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(loader) - i_iter) / 3600.0)
 
                 print(msg)
@@ -306,7 +319,7 @@ def train():
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
 
-            visualize_feature(video_model, video, border)
+            # visualize_feature(video_model, video, border)
 
             loss = {}
 
@@ -326,17 +339,17 @@ def train():
                     label_a, label_b = label, label[index]
 
                     if (args.border):
-                        y_v, _ = video_model(mix_video, mix_border)
+                        y_v = video_model(mix_video, mix_border)
                     else:
-                        y_v, _ = video_model(mix_video)
+                        y_v = video_model(mix_video)
 
                     loss_bp = lambda_ * loss_fn(y_v, label_a) + (1 - lambda_) * loss_fn(y_v, label_b)
 
                 else:
                     if (args.border):
-                        y_v, _ = video_model(video, border)
+                        y_v = video_model(video, border)
                     else:
-                        y_v, _ = video_model(video)
+                        y_v = video_model(video)
 
                     loss_bp = loss_fn(y_v, label)
 
@@ -360,10 +373,10 @@ def train():
 
             # or i_iter == 0
             if i_iter == len(loader) - 1:
-                acc, msg = test()
+                acc, msg = EachClassAcc(1000, Dataset.pinyins)
                 # acc_a, msg_a = test(1)
                 if (acc > best_acc):
-                    savename = '{}front3d_resnet.pt'.format(args.save_prefix)
+                    savename = '{}lrw1000-se.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
@@ -671,7 +684,7 @@ def data_normal_2d(orign_data, dim="col"):
 if (__name__ == '__main__'):
 
     if (args.test):
-        acc, msg = test()
+        acc, msg = EachClassAcc(1000, Dataset.pinyins)
         print(f'acc={acc}')
         exit()
     train()

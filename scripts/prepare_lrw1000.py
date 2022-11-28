@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 from torch.utils.data import Dataset
 import cv2
 import os
@@ -8,7 +9,7 @@ import os
 import scipy.io.wavfile as wav
 import numpy as np
 import torch
-from collections import defaultdict
+from collections import defaultdict, Counter
 import sys
 from torch.utils.data import DataLoader
 # from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
@@ -27,11 +28,12 @@ class LRW1000_Dataset(Dataset):
         lines = []
 
         with open(index_file, 'r', encoding="utf-8") as f:
-            lines.extend([line.strip().split(',') for line in f.readlines()])
+            lines.extend([line.strip().split(',')  for line in f.readlines()])
+
         # local
         # self.data_root = 'E:\LRW\images\LRW1000_Public\images'
         # 3080
-        self.data_root = '/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/images'
+        self.data_root = '/home/mingwu/workspace_czg/LRW/images/LRW1000_Public/images'
         # 3090
         # self.data_root = '/home/czg/dataset/LRW/images/LRW1000_Public/images'
         #
@@ -332,7 +334,7 @@ class LRW1000_Dataset(Dataset):
             # local
             # audio_file = 'E:/LRW/audio/' + audio_file + '.npy'
             # 3080
-            audio_file = '/home/mingwu/workspace_czg/data/LRW/LRW/audio/' + audio_file + '.npy'
+            audio_file = '/home/mingwu/workspace_czg/LRW/audio/' + audio_file + '.npy'
             # 3090
             # audio_file = '/home/czg/dataset/LRW/audio/' + audio_file + '.npy'
             if (os.path.exists(audio_file)):
@@ -350,7 +352,7 @@ class LRW1000_Dataset(Dataset):
         # local
         # self.anno = 'E:/LRW/info/all_audio_video.txt'
         # 3080
-        self.anno = '/home/mingwu/workspace_czg/data/LRW/LRW/info/all_audio_video.txt'
+        self.anno = '/home/mingwu/workspace_czg/LRW/info/all_audio_video.txt'
         # 3090
         # self.anno = '/home/czg/dataset/LRW/info/all_audio_video.txt'
         with open(self.anno, 'r', encoding="utf-8") as f:
@@ -364,17 +366,6 @@ class LRW1000_Dataset(Dataset):
                 va_dict[(v, op, ed, pinyin)] = a
 
         return va_dict
-
-    def getPhoneme(self, pinyin):
-
-        pinyinlist = pinyin.split(' ')
-        List = np.zeros(286)
-        for line in pinyinlist:
-            List[self.PhonemeList.index(line)] = 1
-        # for line in pinyinlist:
-        #     for i in self.PhonemeList[line]:
-        #         List[i] = 1
-        return List
 
     def __len__(self):
         return len(self.data)
@@ -391,16 +382,8 @@ class LRW1000_Dataset(Dataset):
         result['video'] = inputs
         result['label'] = int(label)
         result['duration'] = border.astype(np.bool)
-        # result['phoneme'] = self.getPhoneme(self.pinyins[int(label)])
-        # phomelist = []
-        # for i, input in enumerate(result['phoneme']):
-        #     if input != 0:
-        #         phomelist.append(self.PhonemeList[i])
 
         label = [char for label in self.pinyins[int(label)] for char in label]
-        # for i, label in enumerate(self.pinyins[int(label)]):
-        #     for char in label:
-        #         label += [char]
 
         pinyinlable = [self.char_to_num[i] for i in label]
         result['pinyinlable'] = torch.tensor(pinyinlable, dtype=torch.int32).numpy()
@@ -420,14 +403,6 @@ class LRW1000_Dataset(Dataset):
         center = (op + ed) / 2
         length = (ed - op + 1)
 
-        # time = 1
-        # if length < 5:
-        #     time = 8
-        # elif length < 10:
-        #     time = 4
-        # elif length < 20:
-        #     time = 2
-        # pad = self.padding // time
         pad = self.padding
         op = int(center - pad // 2)
         ed = int(op + pad)
@@ -440,17 +415,12 @@ class LRW1000_Dataset(Dataset):
         # print(length, center, op, ed, left_border, right_border)
 
         files = [os.path.join(path, '{}.jpg'.format(i)) for i in range(op, ed)]
-        # files = files * time
         files = filter(lambda path: os.path.exists(path), files)
         files = [cv2.imread(file) for file in files]
-        # for i in files:
-        #     if i.shape[0] < 64:
-        #         return None, None
-
         files = [cv2.resize(file, (96, 96)) for file in files]
 
         # ed - op < ed -op
-        if len(files) < length // 2 or len(files) == 0:
+        if len(files) < (length // 2) or len(files) == 0:  # length=0
             print(path + " error op: " + str(op))
             return None, None
 
@@ -460,10 +430,7 @@ class LRW1000_Dataset(Dataset):
         tensor = np.zeros((40, 96, 96, 3)).astype(files.dtype)
         border = np.zeros(40)
         tensor[:t, ...] = files.copy()
-        # border[left_border:right_border] = np.arange(1, right_border - left_border + 1)
         border[left_border:right_border] = 1.0
-        # border = np.tile(border, time)
-        # border[:t] = 1.0
 
         tensor = [jpeg.encode(tensor[_]) for _ in range(40)]
 
@@ -478,24 +445,18 @@ def wav_to_numpy_arr_converter(wav_path, target_path):
 
         frequency, wav_arr = wav.read(wav_path + '/' + name)
         music_arr.append(wav_arr)
-        # print(name[:-4], ' converted and append to numpy array')
         np.save(target_path + '/' + name[:-4] + '.npy', music_arr)
 
 
 if (__name__ == '__main__'):
-    # 转换wav为npy
-    img1 = cv2.imread('/home/mingwu/workspace_czg/data/LRW/LRW/images/LRW1000_Public/lip/11111131f70e5f6dc399a43bc9f53cf8/10.jpg')
-    cv2.imshow('img', img1)
-    cv2.waitKey(0)
-
 
     for subset in ['trn', 'val', 'tst']:
         # local
         # target_dir = f'E:/LRW1000_Public_pkl_jpeg/{subset}'
         # index_file = f'E:/LRW/info/{subset}_1000.txt'
         # 3080
-        target_dir = f'/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/{subset}'
-        index_file = f'/home/mingwu/workspace_czg/data/LRW/LRW/info/{subset}_1000.txt'
+        target_dir = f'/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg/{subset}'
+        index_file = f'/home/mingwu/workspace_czg/LRW/info/{subset}_1000.txt'
         # 3090
         # target_dir = f'/home/czg/dataset/LRW1000_Phome/{subset}'
         # target_dir = f'/home/czg/dataset/LRW1000_Public_pkl_jpeg/{subset}'
