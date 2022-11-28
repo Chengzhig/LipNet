@@ -55,12 +55,13 @@ class VideoModel(nn.Module):
         super(VideoModel, self).__init__()
 
         self.args = args
-        self.video_cnn = VideoCNN(se=self.args.se)
+        self.video_cnn = VideoCNN(se=False, CBAM=True)
 
         if (self.args.border):
             self.in_dim = 512 + 1
         else:
             self.in_dim = 512
+
         self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
 
         self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
@@ -68,6 +69,7 @@ class VideoModel(nn.Module):
 
     def forward(self, v, border=None):
         self.gru.flatten_parameters()
+
         if (self.training):
             with autocast():
                 f_v = self.video_cnn(v)
@@ -84,7 +86,6 @@ class VideoModel(nn.Module):
         y_v = self.v_cls(self.dropout(h)).mean(1)
 
         return y_v
-
 
 
 class NETModel(nn.Module):
