@@ -29,10 +29,10 @@ class MLP(nn.Module):
         return out
 
 
-class VideoModel(nn.Module):
+class VideoModel1(nn.Module):
 
     def __init__(self, args, dropout=0.2):
-        super(VideoModel, self).__init__()
+        super(VideoModel1, self).__init__()
 
         self.model = VisionTransformer(img_size=88, in_chans=1, num_classes=1000, patch_size=16, embed_dim=768,
                                        depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
@@ -49,20 +49,21 @@ class VideoModel(nn.Module):
             nn.init.uniform_(param, -0.1, 0.1)
 
 
-class VideoModel1(nn.Module):
+class VideoModel(nn.Module):
 
     def __init__(self, args, dropout=0.5):
-        super(VideoModel1, self).__init__()
+        super(VideoModel, self).__init__()
 
         self.args = args
         self.video_cnn = VideoCNN(se=self.args.se)
 
         if (self.args.border):
-            self.in_dim = 96 + 1
+            self.in_dim = 512 + 1
         else:
-            self.in_dim = 96
-        self.gru = nn.GRU(self.in_dim, 256, 3, batch_first=True, bidirectional=True, dropout=0.2)
+            self.in_dim = 512
+        self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
 
+        self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, v, border=None):
@@ -80,9 +81,10 @@ class VideoModel1(nn.Module):
             f_v = torch.cat([f_v, border], -1)
         h, _ = self.gru(f_v)
 
-        y_v = self.dropout(h)
+        y_v = self.v_cls(self.dropout(h)).mean(1)
 
         return y_v
+
 
 
 class NETModel(nn.Module):

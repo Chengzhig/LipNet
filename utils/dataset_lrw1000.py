@@ -346,7 +346,7 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/trn'
+            self.index_root = '/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg/trn'
             # 3090
             # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/trn'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/trn'
@@ -354,7 +354,7 @@ class LRW1000_Dataset(Dataset):
             # local
             # self.index_root = 'E:/LRW1000_Public_pkl_jpeg/trn'
             # 3080
-            self.index_root = '/home/mingwu/workspace_czg/data/LRW/LRW1000_Public_pkl_jpeg/tst'
+            self.index_root = '/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg/tst'
             # 3090
             # self.index_root = '/home/czg/workspace_chj/LipNet/LRW1000_Public_pkl_jpeg/tst'
             # self.index_root = '/home/czg/dataset/LRW1000_Phome/tst'
@@ -437,10 +437,6 @@ class LRW1000_Dataset(Dataset):
         video = pkl.get('video')
         video = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in video]
         video = np.stack(video, 0)
-        # video[:st, :, :, :] = np.zeros((st, 96, 96, 1)).astype(video.dtype)
-        # video[ed:, :, :, :] = np.zeros((40 - ed, 96, 96, 1)).astype(video.dtype)
-        # video[0:ed - st, :, :, :] = video[st:ed, :, :, :]
-        # video[st:ed, :, :, :] = np.zeros((ed - st, 96, 96, 1)).astype(video.dtype)
         video = video[:, :, :, 0]
         if (self.phase == 'train'):
             video = RandomCrop(video, (88, 88))
@@ -448,29 +444,29 @@ class LRW1000_Dataset(Dataset):
         elif self.phase == 'val' or self.phase == 'test':
             video = CenterCrop(video, (88, 88))
         # video = gaussian_noise(video, 0, 0.1)
-        # pkl['video'] = torch.FloatTensor(video)[:, None, ...] / 255.0
-        videoTensor = torch.FloatTensor(video)[:, None, ...] / 255.0
+        pkl['video'] = torch.FloatTensor(video)[:, None, ...] / 255.0
+        # videoTensor = torch.FloatTensor(video)[:, None, ...] / 255.0
         # for i in range(40):
         #     mean_video = torch.mean(videoTensor[i, :, :])
         #     std_video = torch.std(videoTensor[i, :, :])
         #     if mean_video != torch.zeros(1) and std_video != torch.zeros(1):
         #         videoTensor[i, :, :] -= mean_video
         #         videoTensor[i, :, :] /= std_video
-        pkl['video'] = videoTensor
+        # pkl['video'] = videoTensor
 
         label = pkl.get('label')
         pinyin = pinyinlist[int(label)]
-        pinyinlable = np.full((40), 49).astype(pkl['pinyinlable'].dtype)
-        t = 0
-        for i in pinyin.split(' '):
-            for j in PhonemeList[i]:
-                pinyinlable[t] = j
-                t += 1
-            pinyinlable[t] = 48
-            t += 1
-        pkl['target_lengths'] = torch.tensor(t - 1).numpy()
+        pinyinlable = np.full((1), 49).astype(pkl['pinyinlable'].dtype)
+        # t = 0
+        # for i in pinyin.split(' '):
+        #     for j in PhonemeList[i]:
+        #         pinyinlable[t] = j
+        #         t += 1
+        #     pinyinlable[t] = 48
+        #     t += 1
+        # pkl['target_lengths'] = torch.tensor(t - 1).numpy()
         pkl['pinyinlable'] = pinyinlable
-        pkl['src_lengths'] = torch.tensor(ed-st)
+        # pkl['src_lengths'] = torch.tensor(ed-st)
 
         # t = 0
         # for item in pkl['pinyinlable']:

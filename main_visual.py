@@ -63,7 +63,8 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-NETModel = LipNet_Pinyin(args).cuda()
+# NETModel = LipNet_Pinyin(args).cuda()
+NETModel = VideoModel(args).cuda()
 writer = SummaryWriter(comment="log")
 
 
@@ -98,16 +99,10 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(NETModel, weight.get('video_model'))
 
-# pretrained_dict = torch.load(
-#     "./checkpoints/lrw-1000-baseline/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023.pt")
-pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode_remove_RES_test.pt")
-model_dict = NETModel.state_dict()
-# 1. filter out unnecessary keys
-# pretrained_dict = {k: v for k, v in pretrained_dict['video_model'].items() if k in model_dict}
-pretrained_dict = {k: v for k, v in pretrained_dict['NETModel'].items() if k in model_dict}
-# 2. overwrite entries in the existing state dict
-model_dict.update(pretrained_dict)
-NETModel.load_state_dict(model_dict)
+pretrained_dict = torch.load(
+    "./checkpoints/lrw-1000-baseline/CBAM_resnet_0.5638.pt")
+# pretrained_dict = torch.load("./checkpoints/lrw-1000-baseline/_weight_pinyin_encode_decode_remove_RES_test.pt")
+load_missing(NETModel, pretrained_dict.get('video_model'))
 
 NETModel = parallel_model(NETModel)
 
@@ -218,13 +213,11 @@ def test(Istrain=0):
             label = input.get('label').cuda(non_blocking=True)
             total = total + video.size(0)
             border = input.get('duration').cuda(non_blocking=True).float()
-            src_st = input.get('src_st').cuda(non_blocking=True)
-            src_ed = input.get('src_ed').cuda(non_blocking=True)
             pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
             # target_length = input.get('target_lengths')
 
             with autocast():
-                character = NETModel(video, border, src_st, src_ed, border=border)
+                character = NETModel(video,  border=border)
                 # pinyin = NETModel(video, border)
 
             v_acc.extend((character.argmax(-1) == label).cpu().numpy().tolist())
@@ -235,13 +228,11 @@ def test(Istrain=0):
             if (i_iter % 10 == 0):
                 msg = ''
                 msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
-                # msg = add_msg(msg, ' p_acc={:.5f}', np.array(p_acc).reshape(-1).mean())
                 msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(testloader) - i_iter) / 3600.0)
 
                 print(msg)
 
         acc = float(np.array(v_acc).reshape(-1).mean())
-        # pinyin_acc = float(np.array(p_acc).reshape(-1).mean())
         msg = 'v_acc_{:.5f}_'.format(acc)
 
         return acc, msg
@@ -296,8 +287,7 @@ def train():
             video = input.get('video').cuda(non_blocking=True)
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
-
-            src_lengths = input.get('src_lengths').cuda(non_blocking=True)
+            # src_lengths = input.get('src_lengths').cuda(non_blocking=True)
             pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
             # pinyinlable_length = input.get('target_lengths').cuda(non_blocking=True)
 
@@ -322,17 +312,17 @@ def train():
                     label_a, label_b = label, label[index]
 
                     if (args.border):
-                        character = NETModel(mix_video, pinyinlable, src_lengths, border=mix_border)
+                        character = NETModel(mix_video, border=mix_border)
                     else:
-                        character = NETModel(mix_video, pinyinlable, src_lengths)
+                        character = NETModel(mix_video)
 
                     loss_bp = lambda_ * loss_fn(character, label_a) + (1 - lambda_) * loss_fn(character, label_b)
 
                 else:
                     if (args.border):
-                        character = NETModel(video, pinyinlable, src_lengths, border=border)
+                        character = NETModel(video, border=border)
                     else:
-                        character = NETModel(video, pinyinlable, src_lengths)
+                        character = NETModel(video)
 
                     loss_bp = loss_fn(character, label)
 
@@ -365,13 +355,13 @@ def train():
 
                 if (acc > best_acc):
                     writer.add_scalar("best_acc", best_acc, epoch + 1)
-                    savename = '{}_teach.pt'.format(args.save_prefix)
+                    savename = '{}front3D.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
                     torch.save(
                         {
-                            'NETModel': NETModel.module.state_dict(),
+                            'video_model': NETModel.module.state_dict(),
                         }, savename)
 
                 if (tot_iter != 0):

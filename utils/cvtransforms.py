@@ -27,10 +27,7 @@ def CenterCrop(batch_img, size):
     img = np.zeros((batch_img.shape[0], th * 2, tw))
     x1 = int(round((w - tw)) / 2.)
     y1 = int(round((h - th)) / 2.)
-    tmpimg = batch_img[:, y1:y1 + th, x1:x1 + tw]
-    for i_iter, input in enumerate(tmpimg):
-        tmp = cv2.resize(input, (th * 2, tw), fx=1, fy=2)
-        img[i_iter, :, :] = tmp
+    img = batch_img[:, y1:y1 + th, x1:x1 + tw]
     return img
 
 

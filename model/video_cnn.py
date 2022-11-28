@@ -10,7 +10,6 @@ from .CBAM import ChannelAttention, SpatialAttention
 
 
 class Conv_CBAM(nn.Module):
-    # Standard convolution
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True,
                  bias=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super(Conv_CBAM, self).__init__()
@@ -33,14 +32,11 @@ class Conv_CBAM(nn.Module):
 
 
 def conv3x3(in_planes, out_planes, stride=1):
-    # return Conv_CBAM(in_planes, out_planes, k=3, s=stride,
-    #                  p=1, bias=False)
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
 
 
 def conv1x1(in_planes, out_planes, stride=1):
-    # return Conv_CBAM(in_planes, out_planes, k=1)
     return nn.Conv2d(in_planes, out_planes, kernel_size=1)
 
 
@@ -51,7 +47,7 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.PReLU()
+        self.relu = nn.ReLU()
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
@@ -144,30 +140,30 @@ class ResNet(nn.Module):
 class VideoCNN(nn.Module):
     def __init__(self, se=False):
         super(VideoCNN, self).__init__()
-        self.frontend = nn.Sequential(
+        self.frontend3D = nn.Sequential(
             nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64),
-            nn.PReLU(),
+            nn.ReLU(True),
             nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         )
         # resnet
-        self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se)
+        self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se,CBAM=)
         self.dropout = nn.Dropout(p=0.5)
-        self.uppool = nn.Sequential(
-            nn.Conv3d(1, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False),
-            nn.BatchNorm3d(64),
-            nn.PReLU(),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-        )
+        # self.uppool = nn.Sequential(
+        #     nn.Conv3d(1, 64, kernel_size=(1, 7, 7), stride=(1, 2, 2), padding=(0, 3, 3), bias=False),
+        #     nn.BatchNorm3d(64),
+        #     nn.ReLU(True),
+        #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        # )
         # backend_gru
         # initialize
         self._initialize_weights()
 
     def visual_frontend_forward(self, x):
         x = x.transpose(1, 2)
-        res = self.uppool(x)
-        x = self.frontend(x)
-        x = res + x
+        # res = self.uppool(x)
+        x = self.frontend3D(x)
+        # x = res + x
         x = x.transpose(1, 2)
         x = x.contiguous()
         x = x.view(-1, 64, x.size(3), x.size(4))
