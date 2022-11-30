@@ -1,25 +1,15 @@
-import numpy
-from PIL import Image, ImageEnhance, ImageFilter
-from torch import permute
 from torch.utils.data import Dataset, DataLoader
-import cv2
 import os
 import glob
-import numpy as np
-import random
-
-from torchvision import transforms
 from turbojpeg import TJPF_GRAY, TurboJPEG
 
 from .cvtransforms import *
 import torch
-from collections import defaultdict
-
 jpeg = TurboJPEG()
 
 
 class LRW1000_Dataset(Dataset):
-    # index_file = f'E:/LRW/info/trn_1000.txt'
+    # index_file = f'E:/LRW/info/trn_1000_full.txt'
     index_file = f'/home/mingwu/workspace_czg/LRW/info/trn_1000.txt'
     # index_file = f'/home/czg/trn_1000.txt'
     lines = []

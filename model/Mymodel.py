@@ -519,8 +519,9 @@ class Attention(nn.Module):
         attention = self.v(x).squeeze(-1)
         max_len = enc_output.shape[1]
         # mask = [batch_size, seq_len]
-        length = torch.arange(max_len).expand(src_lengths.shape[0], max_len).cuda()
-        mask = length >= src_lengths.cuda().unsqueeze(1)
+        # length = torch.arange(max_len).expand(src_lengths.shape[0], max_len).cuda()
+        # mask = length >= src_lengths.cuda().unsqueeze(1)
+        mask = ~src_lengths.byte()
         attention.masked_fill_(mask.cuda(), float('-inf'))
         return self.softmax(attention)  # [batch, seq_len]
 

@@ -1,5 +1,7 @@
 import argparse
 from functools import partial
+
+from model.Mymodel import Encoder, Decoder, Attention
 from .video_cnn import VideoCNN
 import torch
 import torch.nn as nn
@@ -62,12 +64,17 @@ class VideoModel(nn.Module):
         else:
             self.in_dim = 512
 
+        # self.pinyinEncode = Encoder(input_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512, dropout=0.5,
+        #                             num_layers=2)
+        # self.pinyinDecode = Decoder(output_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512,
+        #                             attention=Attention(enc_hid_dim=512, dec_hid_dim=512), num_layers=2, dropout=0.5)
         self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
 
         self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, v, border=None):
+        B = v.shape[0]
         self.gru.flatten_parameters()
 
         if (self.training):
@@ -79,64 +86,31 @@ class VideoModel(nn.Module):
             f_v = self.video_cnn(v)
             f_v = self.dropout(f_v)
         if (self.args.border):
-            border = border[:, :, None]
-            f_v = torch.cat([f_v, border], -1)
-        h, _ = self.gru(f_v)
+            _border = border[:, :, None]
+            f_v = torch.cat([f_v, _border], -1)
 
-        y_v = self.v_cls(self.dropout(h)).mean(1)
+        # h, _ = self.pinyinEncode(f_v)
+        # tgt_len = 40
+        # dec_input = torch.zeros(B, 0)
+        # dec_teach_input = torch.zeros(B, 0)
+        # dec_outputs = torch.zeros(B, tgt_len, 512)
+        # teach_outputs = torch.zeros(B, tgt_len, 512)
+        # for t in range(tgt_len):
+        #     # teach_output
+        #     dec_output, prev_hidden = self.pinyinDecode(dec_teach_input, prev_hidden, h, border)
+        #     dec_outputs[:, t, :] = dec_output
+        #     dec_teach_input = tgt[:, t]
+        #
+        #     #dec_output
+        #     teach_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, h, border)
+        #     teach_outputs[:, t, :] = teach_output
+        #     top1 = teach_output.argmax(1)
+        #     dec_input = top1
+
+        y_v, _ = self.gru(f_v)
+        y_v = self.v_cls(self.dropout(y_v)).mean(1)
 
         return y_v
-
-
-class NETModel(nn.Module):
-
-    def __init__(self, args, dropout=0.2):
-        super(NETModel, self).__init__()
-
-        self.args = args
-        self.videoModel1 = VideoModel1(self.args)
-        self.gru = nn.LSTM(29, 256, 2, batch_first=True, bidirectional=True, dropout=0.2)
-        # self.cc = nn.Conv1d(512 * 2, 512, kernel_size=5, stride=2, padding=3, bias=False)
-        self.gru1 = nn.LSTM(512 * 2, 1024, 2, batch_first=True, bidirectional=True, dropout=0.2)
-        self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
-        self.dropout = nn.Dropout(p=dropout)
-        for name, param in self.gru.named_parameters():
-            nn.init.uniform_(param, -0.1, 0.1)
-        for name, param in self.gru1.named_parameters():
-            nn.init.uniform_(param, -0.1, 0.1)
-
-    def forward(self, pinyin, v, border=None):
-        y_v, _ = self.gru(pinyin)
-        y_v1 = self.videoModel1(v, border)
-        y = torch.cat([y_v, y_v1], 2)
-        y, _ = self.gru1(y)
-        y = self.v_cls(y).mean(1)
-
-        return y
-
-
-class FeatureExtractor(nn.Module):
-    def __init__(self, submodule, extracted_layers):
-        super(FeatureExtractor, self).__init__()
-        self.submodule = submodule
-        self.extracted_layers = extracted_layers
-
-    def forward(self, x, border):
-        outputs = []
-        print('---------', self.submodule._modules.items())
-        for name, module in self.submodule._modules.items():
-            if "fc" in name:
-                x = x.view(x.size(0), -1)
-            print(module)
-            if name == "video_cnn":
-                x = module(x)
-            else:
-                x = module(x, border)
-            print('name', name)
-            if name in self.extracted_layers:
-                outputs.append(x)
-                break
-        return outputs
 
 
 parser = argparse.ArgumentParser()

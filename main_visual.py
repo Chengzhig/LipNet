@@ -86,10 +86,10 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-# weight = torch.load('/home/czg/lrw1000-border-se-mixup-label-smooth-cosine-lr-wd-1e-4-acc-0.56023_2.pt',
+# weight = torch.load('/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/front3D_CBAM.pt',
 #                     map_location=torch.device('cpu'))
 weight = torch.load(
-    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/CBAM_resnet_0.5638.pt',
+    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/front3D_CBAM.pt',
     map_location=torch.device('cpu'))
 load_missing(video_model, weight.get('video_model'))
 video_model = parallel_model(video_model)
@@ -151,6 +151,7 @@ corpus = codecs.open(data_path + 'corpus.txt', 'r', 'utf8').read()
 chars = codecs.open(data_path + 'char.txt', 'r', 'utf8').read()
 word_chars = codecs.open(data_path + 'wordChars.txt', 'r', 'utf8').read()
 
+best_acc = 0.0
 
 # chars = 'Cabcdefghijklmnopqrstuvwxyz '
 # wbs = WordBeamSearch(28, 'NGrams', 0.0, corpus.encode('utf8'), chars.encode('utf8'),
@@ -288,12 +289,11 @@ def train():
     max_epoch = args.max_epoch
     ce = nn.CrossEntropyLoss()
     tot_iter = 0
-    best_acc = 0.0
-    best_acc_a = 0.0
     adjust_lr_count = 0
     alpha = 0.2
     beta_distribution = torch.distributions.beta.Beta(alpha, alpha)
     scaler = GradScaler()
+    global best_acc
 
     for epoch in range(max_epoch):
         total = 0.0
@@ -310,7 +310,7 @@ def train():
             label = input.get('label').cuda(non_blocking=True).long()
             border = input.get('duration').cuda(non_blocking=True).float()
             # src_lengths = input.get('src_lengths').cuda(non_blocking=True)
-            pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
+            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
             # pinyinlable_length = input.get('target_lengths').cuda(non_blocking=True)
 
             loss = {}
@@ -360,7 +360,6 @@ def train():
                 msg += ',{}={:.5f}'.format(k, v)
             msg = msg + str(',lr=' + str(showLR(optim_video)))
             msg = msg + str(',best_acc={:2f}'.format(best_acc))
-            msg = msg + str(',best_acc_a={:2f}'.format(best_acc_a))
             print(msg)
 
             # or i_iter == 0
@@ -379,7 +378,6 @@ def train():
 
                 if (tot_iter != 0):
                     best_acc = max(acc, best_acc)
-                    # best_acc_a = max(acc_a, best_acc_a)
 
             tot_iter += 1
         scheduler_net.step()
@@ -438,6 +436,7 @@ def computeACC(pinyin, pinyinlable, target_length):
                                                                         (Tp + Tn_1 + Tn_2)))
             y_v1 = y_v1.float()
     return Tp / (Tp + Tn_1 + Tn_2)
+
 
 def getLable(i):
     dict = [" C", " a", "ai", " ai ", " an", "  an jian", "  an quan", " an zhao", "  ba", "  ba li", "  ba xi",
@@ -678,6 +677,7 @@ if (__name__ == '__main__'):
         acc, msg = EachClassAcc(1000, Dataset.pinyins)
         print(f'acc={acc}')
         exit()
+    best_acc, _ = test()
     train()
     try:
         writer.close()

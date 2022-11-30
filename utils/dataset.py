@@ -4,20 +4,25 @@ import glob
 import time
 import cv2
 import os
+
+from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from .cvtransforms import *
 import torch
 from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
-
 jpeg = TurboJPEG()
 
 
 class LRWDataset(Dataset):
+    # index_file = f'E:/LRW/info/trn_1000_full.txt'
+    index_file = f'/home/mingwu/workspace_czg/LRW/lipread_mp4'
+    # index_file = f'/home/czg/lipread_mp4'
+    with open('label_sorted.txt') as myfile:
+        pinyins = myfile.read().splitlines()
+
     def __init__(self, phase, index_file):
 
-        with open('../label_sorted.txt') as myfile:
-            self.labels = myfile.read().splitlines()
-
+        self.labels = LRWDataset.pinyins
         self.list = []
         self.unlabel_list = []
         self.phase = phase
@@ -25,14 +30,14 @@ class LRWDataset(Dataset):
         self.index_file = index_file
 
         for (i, label) in enumerate(self.labels):
-            files = glob.glob(os.path.join(self.index_file, label, phase, '*.npz'))
+            files = glob.glob(os.path.join(LRWDataset.index_file, label, phase, '*.pkl'))
             files = sorted(files)
 
-            self.list += [file for file in files]
+            self.list += [label for file in range(len(files))]
 
     def __getitem__(self, idx):
 
-        tensor = np.load(self.list[idx], allow_pickle=True)
+        tensor = torch.load(self.list[idx])
 
         inputs = tensor.get('video')
         inputs = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in inputs]
@@ -51,14 +56,14 @@ class LRWDataset(Dataset):
         result['label'] = tensor.get('label')
         result['duration'] = 1.0 * tensor.get('duration')
 
-        word = self.labels[int(result['label'])]
+        # word = self.labels[int(result['label'])]
 
-        pinyinlable = np.full((40), 0).astype(result['pinyinlable'].dtype)
-        t = 0
-        for i in word:
-            pinyinlable[t] = int(i - 'A')
-            t += 1
-        result['pinyinlable'] = pinyinlable
+        # pinyinlable = np.full((40), 0).astype(result['pinyinlable'].dtype)
+        # t = 0
+        # for i in word:
+        #     pinyinlable[t] = int(i - 'A')
+        #     t += 1
+        # result['pinyinlable'] = pinyinlable
 
         return result
 

@@ -38,15 +38,15 @@ if (not os.path.exists(target_dir)):
 class LRWDataset(Dataset):
     def __init__(self):
 
-        with open('label_sorted.txt') as myfile:
+        with open('/home/czg/LRW/pythonproject/label_sorted.txt') as myfile:
             self.labels = myfile.read().splitlines()
 
         self.list = []
 
         for (i, label) in enumerate(self.labels):
-            files = glob.glob(os.path.join('lrw_mp4', label, '*', '*.mp4'))
+            files = glob.glob(os.path.join('/home/czg/lipread_mp4', label, '*', '*.mp4'))
             for file in files:
-                savefile = file.replace('lrw_mp4', target_dir).replace('.mp4', '.pkl')
+                savefile = file.replace('lipread_mp4', target_dir).replace('.mp4', '.pkl')
                 savepath = os.path.split(savefile)[0]
                 if (not os.path.exists(savepath)):
                     os.makedirs(savepath)
