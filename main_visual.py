@@ -1,3 +1,5 @@
+import json
+
 from matplotlib import pyplot as plt
 from tensorboardX import writer
 from torch.utils.data import DataLoader
@@ -56,7 +58,24 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
-video_model = VideoModel(args).cuda()
+
+def load_json(json_fp):
+    assert os.path.isfile(json_fp), "Error loading JSON. File provided does not exist, cannot read: {}".format(json_fp)
+    with open(json_fp, 'r') as f:
+        json_content = json.load(f)
+    return json_content
+
+
+args_loaded = load_json('dctcn.json')
+densetcn_options = {'block_config': args_loaded['densetcn_block_config'],
+                    'growth_rate_set': args_loaded['densetcn_growth_rate_set'],
+                    'reduced_size': args_loaded['densetcn_reduced_size'],
+                    'kernel_size_set': args_loaded['densetcn_kernel_size_set'],
+                    'dilation_size_set': args_loaded['densetcn_dilation_size_set'],
+                    'squeeze_excitation': args_loaded['densetcn_se'],
+                    'dropout': args_loaded['densetcn_dropout'],
+                    }
+video_model = VideoModel(args, densetcn_options=densetcn_options).cuda()
 
 
 def parallel_model(model):
@@ -86,12 +105,16 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-# weight = torch.load('/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/front3D_CBAM.pt',
-#                     map_location=torch.device('cpu'))
-weight = torch.load(
-    '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/front3D_CBAM.pt',
-    map_location=torch.device('cpu'))
+weight = torch.load('/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/front3D_CBAM_lrw.pt',
+                    map_location=torch.device('cpu'))
+# weight = torch.load(
+#     '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/front3D_CBAM_lrw.pt',
+#     map_location=torch.device('cpu'))
 load_missing(video_model, weight.get('video_model'))
+weight = torch.load(
+    '/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/lrw_resnet18_dctcn_video_boundary.pth',
+    map_location=torch.device('cpu'))
+load_missing(video_model, weight.get('model_state_dict'))
 video_model = parallel_model(video_model)
 
 
@@ -152,6 +175,7 @@ chars = codecs.open(data_path + 'char.txt', 'r', 'utf8').read()
 word_chars = codecs.open(data_path + 'wordChars.txt', 'r', 'utf8').read()
 
 best_acc = 0.0
+
 
 # chars = 'Cabcdefghijklmnopqrstuvwxyz '
 # wbs = WordBeamSearch(28, 'NGrams', 0.0, corpus.encode('utf8'), chars.encode('utf8'),
@@ -367,7 +391,7 @@ def train():
                 acc, msg = test(0)
 
                 if (acc > best_acc):
-                    savename = '{}front3D_CBAM.pt'.format(args.save_prefix)
+                    savename = '{}front3D_CBAM_densetcn.pt'.format(args.save_prefix)
                     temp = os.path.split(savename)[0]
                     if (not os.path.exists(temp)):
                         os.makedirs(temp)
@@ -679,8 +703,4 @@ if (__name__ == '__main__'):
         exit()
     best_acc, _ = test()
     train()
-    try:
-        writer.close()
-    except BaseException:
-        writer.close()
     exit()

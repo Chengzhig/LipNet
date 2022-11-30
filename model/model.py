@@ -2,6 +2,7 @@ import argparse
 from functools import partial
 
 from model.Mymodel import Encoder, Decoder, Attention
+from model.densetcn import DenseTemporalConvNet
 from .video_cnn import VideoCNN
 import torch
 import torch.nn as nn
@@ -51,12 +52,41 @@ class VideoModel1(nn.Module):
             nn.init.uniform_(param, -0.1, 0.1)
 
 
+def _average_batch(x, lengths, B):
+    return torch.stack([torch.mean(x[index][:, 0:i], 1) for index, i in enumerate(lengths)], 0)
+
+
+class DenseTCN(nn.Module):
+    def __init__(self, block_config, growth_rate_set, input_size, reduced_size, num_classes,
+                 kernel_size_set, dilation_size_set,
+                 dropout, relu_type,
+                 squeeze_excitation=False,
+                 ):
+        super(DenseTCN, self).__init__()
+
+        num_features = reduced_size + block_config[-1] * growth_rate_set[-1]
+        self.tcn_trunk = DenseTemporalConvNet(block_config, growth_rate_set, input_size, reduced_size,
+                                              kernel_size_set, dilation_size_set,
+                                              dropout=dropout, relu_type=relu_type,
+                                              squeeze_excitation=squeeze_excitation,
+                                              )
+        self.tcn_output = nn.Linear(num_features, num_classes)
+        self.consensus_func = _average_batch
+
+    def forward(self, x):
+        x = self.tcn_trunk(x.transpose(1, 2))
+        # x = self.consensus_func(x, lengths, B)
+        return self.tcn_output(x.transpose(1, 2))
+
+
 class VideoModel(nn.Module):
 
-    def __init__(self, args, dropout=0.5):
+    def __init__(self, args, dropout=0.5, densetcn_options={}, relu_type='prelu', width_mult=1.0,
+                 use_boundary=False, extract_feats=False):
         super(VideoModel, self).__init__()
 
         self.args = args
+        self.densetcn_options = densetcn_options
         self.video_cnn = VideoCNN(se=False, CBAM=True)
 
         if (self.args.border):
@@ -64,19 +94,25 @@ class VideoModel(nn.Module):
         else:
             self.in_dim = 512
 
-        # self.pinyinEncode = Encoder(input_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512, dropout=0.5,
-        #                             num_layers=2)
-        # self.pinyinDecode = Decoder(output_dim=512, emb_dim=512, enc_hid_dim=512, dec_hid_dim=512,
-        #                             attention=Attention(enc_hid_dim=512, dec_hid_dim=512), num_layers=2, dropout=0.5)
-        self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
-
-        self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
+        if self.densetcn_options:
+            self.tcn = DenseTCN(block_config=densetcn_options['block_config'],
+                                growth_rate_set=densetcn_options['growth_rate_set'],
+                                input_size=self.in_dim,
+                                reduced_size=densetcn_options['reduced_size'],
+                                num_classes=self.args.n_class,
+                                kernel_size_set=densetcn_options['kernel_size_set'],
+                                dilation_size_set=densetcn_options['dilation_size_set'],
+                                dropout=densetcn_options['dropout'],
+                                relu_type=relu_type,
+                                squeeze_excitation=densetcn_options['squeeze_excitation'],
+                                )
+        else:
+            self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
+            self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, v, border=None):
-        B = v.shape[0]
-        self.gru.flatten_parameters()
-
+        B, C, T, H, W = v.size()
         if (self.training):
             with autocast():
                 f_v = self.video_cnn(v)
@@ -89,26 +125,12 @@ class VideoModel(nn.Module):
             _border = border[:, :, None]
             f_v = torch.cat([f_v, _border], -1)
 
-        # h, _ = self.pinyinEncode(f_v)
-        # tgt_len = 40
-        # dec_input = torch.zeros(B, 0)
-        # dec_teach_input = torch.zeros(B, 0)
-        # dec_outputs = torch.zeros(B, tgt_len, 512)
-        # teach_outputs = torch.zeros(B, tgt_len, 512)
-        # for t in range(tgt_len):
-        #     # teach_output
-        #     dec_output, prev_hidden = self.pinyinDecode(dec_teach_input, prev_hidden, h, border)
-        #     dec_outputs[:, t, :] = dec_output
-        #     dec_teach_input = tgt[:, t]
-        #
-        #     #dec_output
-        #     teach_output, prev_hidden = self.pinyinDecode(dec_input, prev_hidden, h, border)
-        #     teach_outputs[:, t, :] = teach_output
-        #     top1 = teach_output.argmax(1)
-        #     dec_input = top1
-
-        y_v, _ = self.gru(f_v)
-        y_v = self.v_cls(self.dropout(y_v)).mean(1)
+        if self.densetcn_options:
+            y_v = self.tcn(f_v).mean(1)
+        else:
+            self.gru.flatten_parameters()
+            y_v, _ = self.gru(f_v)
+            y_v = self.v_cls(self.dropout(y_v)).mean(1)
 
         return y_v
 
