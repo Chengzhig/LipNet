@@ -15,8 +15,8 @@ jpeg = TurboJPEG()
 
 class LRWDataset(Dataset):
     # index_file = f'E:/LRW/info/trn_1000_full.txt'
-    index_file = f'/home/mingwu/workspace_czg/LRW/lipread_mp4'
-    # index_file = f'/home/czg/lipread_mp4'
+    # index_file = f'/home/mingwu/workspace_czg/LRW/lipread_mp4'
+    index_file = f'/home/czg/lipread_mp4'
     with open('label_sorted.txt') as myfile:
         pinyins = myfile.read().splitlines()
 
@@ -33,7 +33,7 @@ class LRWDataset(Dataset):
             files = glob.glob(os.path.join(LRWDataset.index_file, label, phase, '*.pkl'))
             files = sorted(files)
 
-            self.list += [label for file in range(len(files))]
+            self.list += [file for file in files]
 
     def __getitem__(self, idx):
 
