@@ -5,6 +5,10 @@ from tensorboardX import writer
 from torch.utils.data import DataLoader
 import os
 import time
+
+from tqdm import tqdm
+
+from dataloader import get_data_loaders
 from model import *
 import torch.optim as optim
 import random
@@ -12,6 +16,9 @@ from LSR import LSR
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import codecs
+
+from utils.util import update_logger_batch, AverageMeter, mixup_data, mixup_criterion, CheckpointSaver, get_optimizer, \
+    CosineScheduler, get_logger
 
 torch.backends.cudnn.benchmark = True
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -75,6 +82,7 @@ densetcn_options = {'block_config': args_loaded['densetcn_block_config'],
                     'squeeze_excitation': args_loaded['densetcn_se'],
                     'dropout': args_loaded['densetcn_dropout'],
                     }
+
 video_model = VideoModel(args, densetcn_options=densetcn_options).cuda()
 
 
@@ -105,16 +113,12 @@ if (args.weights is not None):
     weight = torch.load(args.weights, map_location=torch.device('cpu'))
     load_missing(video_model, weight.get('video_model'))
 
-weight = torch.load('/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/front3D_CBAM_lrw.pt',
-                    map_location=torch.device('cpu'))
+# weight = torch.load('/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/front3D_CBAM_lrw.pt',
+#                     map_location=torch.device('cpu'))
 # weight = torch.load(
 #     '/home/mingwu/workspace_czg/pycharmproject/checkpoints/lrw-1000-baseline/front3D_CBAM_lrw.pt',
 #     map_location=torch.device('cpu'))
-load_missing(video_model, weight.get('video_model'))
-weight = torch.load(
-    '/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/lrw_resnet18_dctcn_video_boundary.pth',
-    map_location=torch.device('cpu'))
-load_missing(video_model, weight.get('model_state_dict'))
+# load_missing(video_model, weight.get('video_model'))
 video_model = parallel_model(video_model)
 
 
@@ -128,13 +132,7 @@ def dataset2dataloader(dataset, batch_size, num_workers, shuffle=True):
     return loader
 
 
-traindataset = Dataset('train', args)
-print('Start Testing, Data Length:', len(traindataset))
-trainloader = dataset2dataloader(traindataset, args.batch_size, args.num_workers, shuffle=True)
-
-testdataset = Dataset('val', args)
-print('Start Testing, Data Length:', len(testdataset))
-testloader = dataset2dataloader(testdataset, args.batch_size, args.num_workers, shuffle=False)
+dset_loaders = get_data_loaders(args)
 
 
 def add_msg(msg, k, v):
@@ -218,63 +216,29 @@ def EachClassAcc(classNum, classes):
         return acc, msg
 
 
-def test(Istrain=0):
-    tmprandom = random.randint(1, 20)
+def test(dset_loader, criterion):
     with torch.no_grad():
-        if Istrain == 1:
-            dataloader = testloader
-        else:
-            dataloader = trainloader
         print('start testing')
 
         v_acc = []
-        p_acc = []
-        entropy = []
-        acc_mean = []
         total = 0
-        cons_acc = 0.0
-        cons_total = 0.0
-        attns = []
-
-        count = 0
-        Tp = 0
-        Tn_1 = 0
-        Tn_2 = 0
         t1 = time.time()
+        running_loss = 0.
+        running_corrects = 0.
 
-        for (i_iter, input) in enumerate(dataloader):
-            if Istrain == 1 and i_iter % 20 != tmprandom:
-                continue
-
+        for batch_idx, data in enumerate(tqdm(dset_loader)):
             video_model.eval()
+            input, lengths, labels, boundaries = data
+            boundaries = boundaries.cuda()
+            logits = model(input.unsqueeze(1).cuda(), lengths=lengths, boundaries=boundaries)
+            _, preds = torch.max(F.softmax(logits, dim=1).data, dim=1)
+            running_corrects += preds.eq(labels.cuda().view_as(preds)).sum().item()
 
-            tic = time.time()
-            video = input.get('video').cuda(non_blocking=True)
-            label = input.get('label').cuda(non_blocking=True)
-            total = total + video.size(0)
-            names = input.get('name')
-            border = input.get('duration').cuda(non_blocking=True).float()
+            loss = criterion(logits, labels.cuda())
+            running_loss += loss.item() * input.size(0)
 
-            with autocast():
-                if (args.border):
-                    y_v = video_model(video, border)
-                else:
-                    y_v = video_model(video)
-
-            v_acc.extend((y_v.argmax(-1) == label).cpu().numpy().tolist())
-
-            toc = time.time()
-            if (i_iter % 10 == 0):
-                msg = ''
-                msg = add_msg(msg, ' v_acc={:.5f}', np.array(v_acc).reshape(-1).mean())
-                msg = add_msg(msg, 'eta={:.5f}', (toc - tic) * (len(dataloader) - i_iter) / 3600.0)
-
-                print(msg)
-
-        acc = float(np.array(v_acc).reshape(-1).mean())
-        msg = 'v_acc_{:.5f}_'.format(acc)
-
-        return acc, msg
+        print(f"{len(dset_loader.dataset)} in total\tCR: {running_corrects / len(dset_loader.dataset)}")
+        return running_corrects / len(dset_loader.dataset), running_loss / len(dset_loader.dataset)
 
 
 def showLR(optimizer):
@@ -309,9 +273,13 @@ def visualize_feature(model, x, border=None):
         plt.show()
 
 
-def train():
+def train(model, dset_loader, logger):
+    optimizer = get_optimizer(args, optim_policies=model.parameters())
+    # -- get learning rate scheduler
+    scheduler = CosineScheduler(args.lr, args.epochs)
+    ckpt_saver = CheckpointSaver('./checkpoints/')
     max_epoch = args.max_epoch
-    ce = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
     tot_iter = 0
     adjust_lr_count = 0
     alpha = 0.2
@@ -320,379 +288,60 @@ def train():
     global best_acc
 
     for epoch in range(max_epoch):
-        total = 0.0
-        v_acc = 0.0
-        total = 0.0
+        data_time = AverageMeter()
+        batch_time = AverageMeter()
 
         lsr = LSR()
+        running_loss = 0.
+        running_corrects = 0.
+        running_all = 0.
 
-        for (i_iter, input) in enumerate(trainloader):
+        for batch_idx, data in enumerate(dset_loader):
             tic = time.time()
 
             video_model.train()
-            video = input.get('video').cuda(non_blocking=True)
-            label = input.get('label').cuda(non_blocking=True).long()
-            border = input.get('duration').cuda(non_blocking=True).float()
-            # src_lengths = input.get('src_lengths').cuda(non_blocking=True)
-            # pinyinlable = input.get('pinyinlable').cuda(non_blocking=True).float()
-            # pinyinlable_length = input.get('target_lengths').cuda(non_blocking=True)
+            input, lengths, labels, boundaries = data
+            boundaries = boundaries.cuda()
 
-            loss = {}
+            input, labels_a, labels_b, lam = mixup_data(input, labels, args.alpha)
+            labels_a, labels_b = labels_a.cuda(), labels_b.cuda()
 
-            if (args.label_smooth):
-                loss_fn = lsr
-            else:
-                loss_fn = nn.CrossEntropyLoss()
+            labels_a, labels_b = labels_a.cuda(), labels_b.cuda()
 
-            with autocast():
-                if (args.mixup):
-                    lambda_ = np.random.beta(alpha, alpha)
-                    index = torch.randperm(video.size(0)).cuda(non_blocking=True)
+            optimizer.zero_grad()
 
-                    mix_video = lambda_ * video + (1 - lambda_) * video[index, :]
-                    mix_border = lambda_ * border + (1 - lambda_) * border[index, :]
+            logits = model(input.unsqueeze(1).cuda(), lengths=lengths, boundaries=boundaries)
 
-                    label_a, label_b = label, label[index]
+            loss_func = mixup_criterion(labels_a, labels_b, lam)
+            loss = loss_func(criterion, logits)
 
-                    if (args.border):
-                        y_v = video_model(mix_video, mix_border)
-                    else:
-                        y_v = video_model(mix_video)
+            loss.backward()
+            optimizer.step()
 
-                    loss_bp = lambda_ * loss_fn(y_v, label_a) + (1 - lambda_) * loss_fn(y_v, label_b)
+            # measure elapsed time
+            # -- compute running performance
+            _, predicted = torch.max(F.softmax(logits, dim=1).data, dim=1)
+            running_loss += loss.item() * input.size(0)
+            running_corrects += lam * predicted.eq(labels_a.view_as(predicted)).sum().item() + (1 - lam) * predicted.eq(
+                labels_b.view_as(predicted)).sum().item()
+            running_all += input.size(0)
+            # -- log intermediate results
+            if batch_idx % args.interval == 0 or (batch_idx == len(dset_loader) - 1):
+                update_logger_batch(args, logger, dset_loader, batch_idx, running_loss, running_corrects, running_all,
+                                    batch_time, data_time)
 
-                else:
-                    if (args.border):
-                        y_v = video_model(video, border)
-                    else:
-                        y_v = video_model(video)
-
-                    loss_bp = loss_fn(y_v, label)
-
-            loss['CE V'] = loss_bp
-
-            optim_video.zero_grad()
-            scaler.scale(loss_bp).backward()
-            scaler.step(optim_video)
-            scaler.update()
-
-            toc = time.time()
-
-            msg = 'epoch={},train_iter={},eta={:.5f}'.format(epoch, tot_iter,
-                                                             (toc - tic) * (len(trainloader) - i_iter) / 3600.0)
-            for k, v in loss.items():
-                msg += ',{}={:.5f}'.format(k, v)
-            msg = msg + str(',lr=' + str(showLR(optim_video)))
-            msg = msg + str(',best_acc={:2f}'.format(best_acc))
-            print(msg)
-
-            # or i_iter == 0
-            if i_iter == len(trainloader) - 1:
-                acc, msg = test(0)
-
-                if (acc > best_acc):
-                    savename = '{}front3D_CBAM_densetcn.pt'.format(args.save_prefix)
-                    temp = os.path.split(savename)[0]
-                    if (not os.path.exists(temp)):
-                        os.makedirs(temp)
-                    torch.save(
-                        {
-                            'video_model': video_model.module.state_dict(),
-                        }, savename)
-
-                if (tot_iter != 0):
-                    best_acc = max(acc, best_acc)
-
-            tot_iter += 1
-        scheduler_net.step()
-
-
-def computeACC(pinyin, pinyinlable, target_length):
-    count = 0
-    Tp = 0
-    Tn_1 = 0
-    Tn_2 = 0
-    y_v = torch.softmax(pinyin, 2)
-    targets = []
-    for index, length in enumerate(target_length):
-        label = pinyinlable[index, :length]
-        targets.append(label)
-        if index == 0:
-            tmpPinyinLable = label
-        else:
-            tmpPinyinLable = torch.cat([tmpPinyinLable, label], dim=0)
-    preb_labels = []
-    for i in range(y_v.shape[0]):
-        preb = y_v[i, :, :]
-        preb_label = preb.argmax(dim=1)
-        no_repeat_blank_label = []
-        pre_c = preb_label[0]
-        if pre_c != 28:
-            no_repeat_blank_label.append(pre_c)
-        for c in preb_label:  # dropout repeate label and blank label
-            if (pre_c == c) or (c == 28):
-                if c == 28:
-                    pre_c = c
-                continue
-            no_repeat_blank_label.append(c)
-            pre_c = c
-        preb_labels.append(no_repeat_blank_label)
-
-    for i, label in enumerate(preb_labels):
-        label = torch.tensor(label).cuda()
-        targets[i] = targets[i].cuda()
-        # print('================')
-        # print(label)
-        # print(targets[i])
-        # print('================')
-        if len(label) != len(targets[i]):
-            Tn_1 += 1
-            continue
-        if targets[i].eq(label).all():
-            print("success predict:")
-            print(label.detach().cpu().numpy())
-            Tp += 1
-        else:
-            Tn_2 += 1
-            count += 1
-
-            print("[Info] Validation Accuracy: {} [{}:{}:{}:{}]".format(Tp / (Tp + Tn_1 + Tn_2), Tp, Tn_1, Tn_2,
-                                                                        (Tp + Tn_1 + Tn_2)))
-            y_v1 = y_v1.float()
-    return Tp / (Tp + Tn_1 + Tn_2)
-
-
-def getLable(i):
-    dict = [" C", " a", "ai", " ai ", " an", "  an jian", "  an quan", " an zhao", "  ba", "  ba li", "  ba xi",
-            "  bai", "  ban", "  ban dao", " ban fa", "  bang jia", "  bao", "  bao chi", " bao dao", "  bao gao",
-            "  bao hu", " bao kuo", "  bao yu", " bao zhang", "  bei", "  bei bu", " bei jing", " bei jing shi jian",
-            " bei yue", " ben", "ben ci", " ben yue", " bi", " bi jiao", "bi ru", " bi xu", "bian hua", " biao da",
-            " biao shi", " biao zhi", "biao zhun", " bie", "bing", "bing qie", " bo chu", " bu", "bu duan", " bu fen",
-            "bu guo", "bu hui", "bu jin", "bu men", "bu neng", "bu shao", "bu shu", " bu tong", "bu yao", "bu zhang",
-            "cai", " cai fang", "cai qu", "can jia", " can yu", "ce", "ceng jing", " chan pin", "chan sheng", "chan ye",
-            "chang", "chang qi", " chang yi", "chao guo", " chao xian", "che", " cheng", "cheng gong", " cheng guo",
-            "cheng li", "cheng nuo", "cheng shi", " cheng wei", "chi", "chi xu", " chu", "chu lai", "chu le", "chu li",
-            " chu xi", "chu xian", " chuan tong", " chuang xin", " chun", " ci", " ci ci", " ci qian", "cong", "cu jin",
-            "cun zai", "cuo shi", "da", "da cheng", " da dao", "da gai", "da hui", " da ji", "da jia", "  da xing",
-            "  da xue", "  da yu", "  da yue", "  da zao", "  dai", "  dai biao", "  dai lai", "  dan", "  dan shi",
-            "  dang", "  dang di", "  dang qian", "  dang shi", "  dang tian", "  dang zhong", "  dao", "  dao le",
-            "  dao zhi", "  de", "  de dao", "  de guo", "  deng", "  deng deng", "  di", "  di da", "  di fang",
-            "  di qu", "  di zhi", "  dian", "  dian shi", "  diao cha", "  diao yan", "  dong", "  dong bu",
-            "  dong fang", "  dong li", "  dong xi", "  dou", "  dou shi", "  du", "  duan", "  duan jiao", "  dui",
-            "  dui hua", "  dui wai", "  dui yu", "  duo", "  duo ci", "  duo nian", "  e", "  e luo si", "  er",
-            "  er ling yi qi", "  er qie", "  er shi", "  er shi liu", "  er shi qi", "  er shi san", "  er shi si",
-            "  er shi wu", "  er shi yi", "  er tong", "  er wei ma", "  fa", "  fa biao", "  fa bu", "  fa bu hui",
-            "  fa chu", "  fa guo", "  fa hui", "  fa she", "  fa sheng", "  fa xian", "  fa yan ren", "  fa yuan",
-            "  fa zhan", "  fan", "  fan dui", "  fan rong", "  fan wei", "  fan zui", "  fang", "  fang an",
-            "  fang fan", "  fang mian", "  fang shi", "  fang wen", "  fang xiang", "  fei", "  fei chang", "  fen",
-            "  fen bie", "  fen qi", "  fen zhong", "  fen zi", "  feng hui", "  feng shuo", "  feng xian", "  fu",
-            "  fu jian", "  fu pin", "  fu wu", "  fu ze", "  fu ze ren", "  gai", "  gai bian", "  gai ge",
-            "  gai shan", "  gan", "  gan jue", "  gan shou", "  gan xie", "  gang", "  gang gang", "  gao", "  gao du",
-            "  gao feng", "  gao ji", "  gao wen", "  gao xiao", "  ge", "  ge de", "  ge fang", "  ge guo", "  ge jie",
-            "  ge ren", "  ge wei", "  gei", "  gen", "  gen ju", "  geng", "  geng duo", "  geng hao", "  geng jia",
-            "  gong an", "  gong bu", "  gong cheng", "  gong gong", "  gong he guo", "  gong kai", "  gong li",
-            "  gong min", "  gong shi", "  gong si", "  gong tong", "  gong xian", "  gong xiang", "  gong ye",
-            "  gong you", "  gong zuo", "  gou tong", "  guan jian", "  guan li", "  guan xi", "  guan xin",
-            "  guan yu", "  guan zhong", "  guan zhu", "  guang dong", "  guang fan", "  guang xi", "  gui ding",
-            "  gui fan", "  gui zhou", "  guo", "  guo cheng", "  guo fang bu", "  guo ji", "  guo jia", "  guo lai",
-            "  guo min dang", "  guo nei", "  guo qu", "  guo wu yuan", "  ha", "  hai", "  hai shang", "  hai shi",
-            "  hai wai", "  hai you", "  hai zi", "  han", "  han guo", "  hao", "  he", "  he bei", "  he nan",
-            "  he ping", "  he xin", "  he zuo", "  hen", "  hen duo", "  hou", "  hu", "  hu bei", "  hu lian wang",
-            "  hu nan", "  hu xin", "  hua", "  hua bei", "  hua ti", "  huan jing", "  huan ying", "  huang", "  hui",
-            "  hui dao", "  hui gui", "  hui jian", "  hui shang", "  hui tan", "  hui wu", "  hui yi", "  hui ying",
-            "  huo ban", "  huo bi", "  huo de", "  huo dong", "  huo li", "  huo zai", "  huo zhe", "  ji", "  ji ben",
-            "  ji chang", "  ji chu", "  ji di", "  ji duan", "  ji gou", "  ji guan", "  ji hua", "  ji ji",
-            "  ji jiang", "  ji lu", "  ji shi", "  ji shu", "  ji tuan", "  ji xu", "  ji yu", "  ji zhe", "  ji zhi",
-            "  ji zhong", "  jia", "  jia bin", "  jia ge", "  jia qiang", "  jian", "  jian chi", "  jian ding",
-            "  jian guan", "  jian jue", "  jian kang", "  jian li", "  jian she", "  jiang", "  jiang hua",
-            "  jiang hui", "  jiang su", "  jiang xi", "  jiang yu", "  jiao", "  jiao liu", "  jiao tong", "  jiao yu",
-            "  jie", "  jie duan", "  jie guo", "  jie jue", "  jie mu", "  jie shao", "  jie shou", "  jie shu",
-            "  jie xia lai", "  jie zhi", "  jin", "  jin nian", "  jin nian lai", "  jin qi", "  jin ri", "  jin rong",
-            "  jin ru", "  jin tian", "  jin xing", "  jin yi bu", "  jin zhan", "  jin zhuan", "  jing", "  jing fang",
-            "  jing guo", "  jing ji", "  jing shen", "  jiu", "  jiu shi", "  jiu shi shuo", "  ju", "  ju ban",
-            "  ju da", "  ju jiao", "  ju li", "  ju min", "  ju shi", "  ju ti", "  ju xing", "  ju you", "  jue de",
-            "  jue ding", "  jun", "  jun fang", "  jun shi", "  ka", "  ka ta er", "  kai", "  kai fa", "  kai fang",
-            "  kai mu", "  kai mu shi", "  kai qi", "  kai shi", "  kai zhan", "  kan", "  kan dao", "  kan kan",
-            "  kao", "  ke", "  ke hu duan", "  ke ji", "  ke neng", "  ke xue", "  ke yi", "  kong jian", "  kong zhi",
-            "  kuai", "  la", "  lai", "  lai shuo", "  lai zi", "  lan", "  lang", "  lao", "  le", "  lei", "  li",
-            "  li ji", "  li liang", "  li mian", "  li shi", "  li yi", "  li yong", "  lian", "  lian bang",
-            "  lian he", "  lian he guo", "  lian xi", "  lian xian", "  lian xu", "  liang", "  liang an",
-            "  liang hao", "  liao jie", "  lin", "  ling chen", "  ling dao", "  ling dao ren", "  ling wai",
-            "  ling yu", "  liu", "  long", "  lou", "  lu", "  lu xu", "  lun", "  lun tan", "  luo", "  luo shi",
-            "  ma", "  mao yi", "  mei", "  mei guo", "  mei nian", "  mei ti", "  mei you", "  men", "  meng",
-            "  meng xiang", "  mi", "  mi qie", "  mi shu zhang", "  mian dui", "  mian lin", "  min zhong", "  ming",
-            "  ming que", "  ming tian", "  ming xian", "  mo", "  mu biao", "  mu qian", "  n", "  na", "  na ge",
-            "  na me", "  nan bu", "  nan fang", "  ne", "  nei", "  nei rong", "  neng", "  neng gou", "  neng li",
-            "  neng yuan", "  ni", "  nian", "  nian qing", "  nin", "  nu li", "  ou meng", "  ou zhou", "  peng you",
-            "  pi", "  pian", "  pin dao", "  ping jia", "  ping tai", "  pu bian", "  pu jing", "  qi", "  qi che",
-            "  qi dai", "  qi dong", "  qi jian", "  qi lai", "  qi shi", "  qi ta", "  qi wen", "  qi ye",
-            "  qi zhong", "  qian", "  qian shu", "  qiang", "  qiang diao", "  qiang jiang yu", "  qiang lie",
-            "  qiao", "  qing", "  qing kuang", "  qing zhu", "  qu", "  qu de", "  qu nian", "  qu xiao", "  qu yu",
-            "  quan", "  quan bu", "  quan guo", "  quan mian", "  quan qiu", "  quan ti", "  que", "  que bao",
-            "  que ding", "  que ren", "  ran hou", "  rang", "  re", "  ren", "  ren he", "  ren lei", "  ren min",
-            "  ren min bi", "  ren shi", "  ren shu", "  ren wei", "  ren wu", "  ren yuan", "  reng ran", "  ri",
-            "  ri ben", "  ri qian", "  rong he", "  ru guo", "  ru he", "  san", "  san nian", "  san shi",
-            "  san tian", "  sao miao", "  sen", "  sha te", "  shan", "  shang", "  shang hai", "  shang sheng",
-            "  shang wang", "  shang wu", "  shang ye", "  shao", "  shao hou", "  she bei", "  she hui", "  she ji",
-            "  she shi", "  she xian", "  shen", "  shen fen", "  shen hua", "  shen me", "  shen ru", "  shen zhi",
-            "  sheng", "  sheng chan", "  sheng huo", "  sheng ji", "  sheng ming", "  shi", "  shi ba", "  shi bu shi",
-            "  shi chang", "  shi dai", "  shi er", "  shi gu", "  shi hou", "  shi ji", "  shi ji shang", "  shi jian",
-            "  shi jie", "  shi jiu", "  shi liu", "  shi pin", "  shi qi", "  shi san", "  shi shi", "  shi si",
-            "  shi wei", "  shi wu", "  shi xian", "  shi yan", "  shi ye", "  shi yong", "  shi zhong", "  shou",
-            "  shou ci", "  shou dao", "  shou du", "  shou kan", "  shou shang", "  shou xian", "  shou xiang",
-            "  shu", "  shu ji", "  shu ju", "  shuang", "  shuang fang", "  shui", "  shui ping", "  shuo",
-            "  shuo shi", "  si", "  si chuan", "  si shi", "  si wang", "  sou suo", "  sui", "  sui zhe", "  suo",
-            "  suo wei", "  suo yi", "  suo you", "  suo zai", "  ta", "  ta men", "  tai", "  tai wan", "  tan suo",
-            "  tao", "tao lun", " te", " te bie", "ti", " ti chu", "ti gao", "ti gong", "ti sheng", " ti shi",
-            "ti xian", " ti zhi", " tian", " tian qi", " tian ran qi", " tiao", "tiao jian", " tiao zhan",
-            " tiao zheng", " tie lu", " ting", "tong", " tong bao", " tong guo", " tong ji", "tong shi", "tong yi",
-            "tou piao", " tou zi", "tu po", " tuan dui", "tuan jie", "tui chu", " tui dong", " tui jin", "wai",
-            "wai jiao", "wai jiao bu", "wai zhang", "wan", "wan cheng", "wan quan", " wan shang", " wang", "wang zhan",
-            " wei", " wei fa", "wei fan", " wei hu", " wei lai", "wei le", "wei sheng", "wei xian", "wei xie",
-            " wei yu", "wei yuan", " wei yuan hui", "wei zhi", "wen", "wen ding", "wen hua", " wen ming", "wen ti",
-            " wo", "wo guo", "wo men", "wu", " wu ren ji", "wu shi", " xi", "xi bu", "xi huan", "xi ji", "xi jin ping",
-            "xi lie", "xi tong", "xi wang", "xia", "xia mian", "xia wu", "xia zai", "xian", "xian chang", "xian jin",
-            " xian sheng", " xian shi", " xian yi ren", " xian zai", "xiang", " xiang gang", " xiang guan", " xiang mu",
-            " xiang xi", " xiang xin", " xiao", " xiao shi", "xiao xi", "xie shang", "xie tiao", " xie yi", " xin",
-            " xin wen", " xin wen lian bo", "xin xi", " xin xin", " xin xing", " xin yi lun", "xing", "xing cheng",
-            "xing dong", " xing shi", "xing wei", "xing zheng", " xu li ya", " xu yao", " xuan bu", "xuan ju",
-            "xuan ze", "xue", " ya", "yan fa", " yan ge", "yan jiu", " yan zhong", "yang shi", " yao", " yao qing",
-            "yao qiu", " ye", " yi", "yi ci", " yi dao", " yi dian", "yi ding", " yi dong", " yi fa", " yi ge",
-            " yi hou", "yi hui", " yi ji", " yi jian", "yi jing", "yi kuai", "yi lai", "yi liao", " yi lu", "yi qi",
-            "yi qie", "yi shang", " yi shi", "yi si lan", " yi ti", "yi wai", " yi wei zhe", " yi xi lie", "yi xia",
-            " yi xie", "yi yang", "yi yi", "yi yuan", "yi zhi", " yi zhong", "yin", " yin du", "yin fa", "yin hang",
-            " yin qi", " yin wei", " ying", " ying dui", "ying gai", " ying guo", "ying ji", "ying lai", " ying xiang",
-            " yong", "yong you", " you", "you de", " you guan", " you hao", "you qi", " you shi", " you suo",
-            "you xiao", " you yi", " you yu", " yu", " yu hui", "yu ji", " yu jing", " yu yi", " yuan", " yuan yi",
-            "yuan yin", " yuan ze", "yue", "yue lai yue", " yun ying", " zai", " zai ci", " zai hai", " zai jian",
-            "zan men", "zao", " zao cheng", " zao yu", "ze ren", " zen me", "zen me yang", " zeng jia", "zhan",
-            "zhan kai", "zhan lve", "zhan shi", "zhan zai", "zhang", " zhao dao", " zhao kai", "zhe", " zhe ge",
-            "zhe jiang", " zhe li", "zhe me", "zhe ming", "zhe yang", " zhe zhong", "zhei xie", "zhen de", " zhen dui",
-            "zhen zheng", "zheng", "zheng ce", " zheng chang", "zheng fu", " zheng ge", " zheng shi", " zheng zai",
-            "zheng zhi", " zhi", " zhi bo", " zhi chi", " zhi chu", "zhi dao", " zhi du", " zhi hou", " zhi jian",
-            " zhi jie", "zhi neng", "zhi qian", "zhi shao", " zhi shi", "zhi wai", "zhi xia", " zhi xing", " zhi you",
-            " zhi zao", " zhong", " zhong bu", " zhong da", " zhong dian", " zhong e", "zhong fang",
-            "zhong gong zhong yang", "zhong gong zhong yang zheng zhi ju", "zhong guo", " zhong hua min zu",
-            "zhong shi", "zhong wu", "zhong xin", " zhong yang", "zhong yang qi xiang tai", " zhong yao", " zhou",
-            " zhou nian", " zhu", "zhu he", " zhu quan", " zhu ti", " zhu xi", "zhu yao", " zhu yi", "zhua", " zhuan",
-            " zhuan ji", " zhuan jia", "zhuan xiang", "zhuan ye", " zhuang tai", " zhun bei", "zi", " zi ben", "zi ji",
-            "zi jin", " zi xun", " zi you", " zi yuan", "zi zhu", "zong", " zong he", "zong li", " zong shu ji",
-            " zong tong", "zou", "zu", "zu guo", "zu zhi", " zui", "zui gao", "zui hou", "zui jin", " zui xin",
-            "zui zhong", " zun zhong", "zuo", " zuo chu", " zuo dao", " zuo hao", " zuo tian", "zuo wei", "zuo yong",
-            "zuo you"]
-    return dict[i]
-
-
-# 单韵母:a 0 o 1 e 2 i 3 u 4 v 5
-# 复韵母:ai 6 ei 7 ui 8 ao 9 ou 10 iu 11 ie 12 ve 13 er 14
-# 前鼻韵母:an 15 en 16 in 17 un 18 vn 19
-# 后鼻韵母:ang 20 eng 21 ing 22 ong 23
-# ch 25 sh 26 zh 27 c 28 s 29 z 30 r 31
-# C 24
-# dict = ["a ", " o", " e ", " i ", " u ", "v ", "ai ", " ei ", " ui ", " ao ", " ou ", " iu ", " ie ", " ve ",
-#         " er ", "an ", " en ", " in ", " un ", " vn ", " ang ", " eng ", " ing ", " ong ", " b ", " p ", " m ",
-#         " f ", " d ", " t ", " n ", " l ", " g ", " k ", " h ", " j ", " q ", " x ", " zh ", " ch ", " sh ",
-#         " r ", " z ", " c ", " s ", " y ", " w ", " C "]
-dict = ['C', 'a', 'ai', 'ji', 'an', 'jian',
-        'quan', 'zhao', 'ba', 'li', 'xi',
-        'bai', 'ban', 'dao', 'fa', 'bang',
-        'jia', 'bao', 'chi', 'gao', 'hu',
-        'kuo', 'yu', 'zhang', 'bei', 'bu',
-        'jing', 'shi', 'yue', 'ben', 'ci',
-        'bi', 'jiao', 'ru', 'xu', 'bian',
-        'hua', 'biao', 'da', 'zhi', 'zhun',
-        'bie', 'bing', 'qie', 'bo', 'chu',
-        'duan', 'fen', 'guo', 'hui', 'jin',
-        'men', 'neng', 'shao', 'shu', 'tong',
-        'yao', 'cai', 'fang', 'qu', 'can',
-        'ce', 'ceng', 'chan', 'pin', 'sheng',
-        'ye', 'chang', 'qi', 'yi', 'chao',
-        'xian', 'che', 'cheng', 'gong', 'nuo',
-        'wei', 'lai', 'le', 'chuan', 'chuang',
-        'xin', 'chun', 'qian', 'cong', 'cu',
-        'cun', 'zai', 'cuo', 'gai', 'xing',
-        'xue', 'zao', 'dai', 'dan', 'dang',
-        'di', 'tian', 'zhong', 'de', 'deng',
-        'dian', 'diao', 'cha', 'yan', 'dong',
-        'dou', 'du', 'dui', 'wai', 'duo',
-        'nian', 'e', 'luo', 'si', 'er',
-        'ling', 'liu', 'san', 'wu', 'ma',
-        'she', 'ren', 'yuan', 'zhan', 'fan',
-        'rong', 'zui', 'mian', 'wen',
-        'xiang', 'fei', 'zi', 'feng', 'shuo',
-        'fu', 'ze', 'ge', 'shan', 'gan',
-        'jue', 'shou', 'xie', 'gang', 'xiao',
-        'jie', 'gei', 'gen', 'ju', 'geng',
-        'hao', 'he', 'kai', 'min', 'you',
-        'zuo', 'gou', 'guan', 'zhu',
-        'guang', 'gui', 'ding', 'zhou', 'nei',
-        'ha', 'hai', 'shang', 'han', 'nan',
-        'ping', 'hen', 'hou', 'lian', 'wang',
-        'ti', 'huan', 'ying', 'huang', 'tan',
-        'huo', 'zhe', 'jiang', 'lu', 'tuan',
-        'bin', 'qiang', 'kang', 'su', 'mu',
-        'xia', 'ri', 'zhuan', 'shen', 'jiu',
-        'jun', 'ka', 'ta', 'kan', 'kao',
-        'ke', 'kong', 'kuai', 'la', 'lan',
-        'lang', 'lao', 'lei', 'liang', 'yong',
-        'liao', 'lin', 'chen', 'long', 'lou',
-        'lun', 'mao', 'mei', 'meng', 'mi',
-        'ming', 'que', 'mo', 'n', 'na', 'me',
-        'ne', 'ni', 'qing', 'nin', 'nu', 'ou',
-        'peng', 'pi', 'pian', 'tai', 'pu',
-        'lie', 'qiao', 'kuang', 'qiu', 'ran',
-        'rang', 're', 'reng', 'sao', 'miao',
-        'sen', 'sha', 'te', 'gu', 'shuang',
-        'shui', 'sou', 'suo', 'sui', 'wan',
-        'tao', 'tiao', 'zheng', 'tie', 'ting',
-        'tou', 'piao', 'tu', 'po', 'tui',
-        'wo', 'ya', 'xuan', 'yang', 'yin',
-        'hang', 'yun', 'zan', 'zen', 'zeng',
-        'lve', 'zhei', 'zhen', 'zu', 'zhua',
-        'zhuang', 'xun', 'zong', 'zou', 'zun']
-
-
-def getPinYin(list):
-    res = []
-    for i, input in enumerate(list):
-        res.append(dict[input])
-    return res
-
-
-def getPho(list):
-    res = []
-    for i, input in enumerate(list):
-        if input == 0:
-            continue
-        res.append(dict[i])
-    return res
-
-
-def data_normal_2d(orign_data, dim="col"):
-    if dim == "col":
-        dim = 1
-        d_min = torch.min(orign_data, dim=dim)[0]
-        for idx, j in enumerate(d_min):
-            if j < 0:
-                orign_data[idx, :] += torch.abs(d_min[idx])
-                d_min = torch.min(orign_data, dim=dim)[0]
-    else:
-        dim = 0
-        d_min = torch.min(orign_data, dim=dim)[0]
-        for idx, j in enumerate(d_min):
-            if j < 0:
-                orign_data[idx, :] += torch.abs(d_min[idx])
-                d_min = torch.min(orign_data, dim=dim)[0]
-    d_max = torch.max(orign_data, dim=dim)[0]
-    dst = d_max - d_min
-    if d_min.shape[0] == orign_data.shape[0]:
-        d_min = d_min.unsqueeze(1)
-        dst = dst.unsqueeze(1)
-    else:
-        d_min = d_min.unsqueeze(0)
-        dst = dst.unsqueeze(0)
-    norm_data = torch.sub(orign_data, d_min).true_divide(dst)
-    return norm_data
+        acc_avg_val, loss_avg_val = test(dset_loaders['val'], criterion)
+        logger.info(
+            f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}")
+        # -- save checkpoint
+        save_dict = {
+            'epoch_idx': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()
+        }
+        ckpt_saver.save(save_dict, acc_avg_val)
+        scheduler.adjust_lr(optimizer, epoch)
+        epoch += 1
 
 
 if (__name__ == '__main__'):
@@ -701,6 +350,6 @@ if (__name__ == '__main__'):
         acc, msg = EachClassAcc(1000, Dataset.pinyins)
         print(f'acc={acc}')
         exit()
-    best_acc, _ = test()
-    train()
+    logger = get_logger(args, './checkpoints/')
+    train(video_model, dset_loaders['train'], logger)
     exit()

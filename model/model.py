@@ -3,7 +3,7 @@ from functools import partial
 
 from model.Mymodel import Encoder, Decoder, Attention
 from model.densetcn import DenseTemporalConvNet
-from .video_cnn import VideoCNN
+from .video_cnn import VideoCNN, ResNet, BasicBlock
 import torch
 import torch.nn as nn
 import random
@@ -73,66 +73,65 @@ class DenseTCN(nn.Module):
         self.tcn_output = nn.Linear(num_features, num_classes)
         self.consensus_func = _average_batch
 
-    def forward(self, x):
+    def forward(self, x, lengths, B):
         x = self.tcn_trunk(x.transpose(1, 2))
-        # x = self.consensus_func(x, lengths, B)
-        return self.tcn_output(x.transpose(1, 2))
+        x = self.consensus_func(x, lengths, B)
+        return self.tcn_output(x)
 
 
-class VideoModel(nn.Module):
+class Lipreading(nn.Module):
 
-    def __init__(self, args, dropout=0.5, densetcn_options={}, relu_type='prelu', width_mult=1.0,
+    def __init__(self, args, modality='video', dropout=0.5, densetcn_options={}, relu_type='prelu', width_mult=1.0,
                  use_boundary=False, extract_feats=False):
-        super(VideoModel, self).__init__()
+        super(Lipreading, self).__init__()
+        self.extract_feats = extract_feats
+        self.modality = modality
+        self.use_boundary = use_boundary
 
         self.args = args
         self.densetcn_options = densetcn_options
-        self.video_cnn = VideoCNN(se=False, CBAM=True)
+        self.frontend3D = nn.Sequential(
+            nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
+            nn.BatchNorm3d(32),
+            nn.ReLU(True),
+            nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+            nn.BatchNorm3d(32),
+            nn.ReLU(True),
+            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+            nn.BatchNorm3d(64),
+            nn.ReLU(True),
+            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        )
+        self.trunk = ResNet(BasicBlock, [2, 2, 2, 2], TCSAM=True)
 
         if (self.args.border):
             self.in_dim = 512 + 1
         else:
             self.in_dim = 512
 
-        if self.densetcn_options:
-            self.tcn = DenseTCN(block_config=densetcn_options['block_config'],
-                                growth_rate_set=densetcn_options['growth_rate_set'],
-                                input_size=self.in_dim,
-                                reduced_size=densetcn_options['reduced_size'],
-                                num_classes=self.args.n_class,
-                                kernel_size_set=densetcn_options['kernel_size_set'],
-                                dilation_size_set=densetcn_options['dilation_size_set'],
-                                dropout=densetcn_options['dropout'],
-                                relu_type=relu_type,
-                                squeeze_excitation=densetcn_options['squeeze_excitation'],
-                                )
-        else:
-            self.gru = nn.GRU(self.in_dim, 1024, 3, batch_first=True, bidirectional=True, dropout=0.2)
-            self.v_cls = nn.Linear(1024 * 2, self.args.n_class)
+        self.tcn = DenseTCN(block_config=densetcn_options['block_config'],
+                            growth_rate_set=densetcn_options['growth_rate_set'],
+                            input_size=self.in_dim,
+                            reduced_size=densetcn_options['reduced_size'],
+                            num_classes=self.args.n_class,
+                            kernel_size_set=densetcn_options['kernel_size_set'],
+                            dilation_size_set=densetcn_options['dilation_size_set'],
+                            dropout=densetcn_options['dropout'],
+                            relu_type=relu_type,
+                            squeeze_excitation=densetcn_options['squeeze_excitation'],
+                            )
+
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, v, border=None):
+    def forward(self, v, lengths, border=None):
         B, C, T, H, W = v.size()
-        if (self.training):
-            with autocast():
-                f_v = self.video_cnn(v)
-                f_v = self.dropout(f_v)
-            f_v = f_v.float()
-        else:
-            f_v = self.video_cnn(v)
-            f_v = self.dropout(f_v)
-        if (self.args.border):
+        f_v = self.frontend3D(v)
+        f_v = self.dropout(f_v)
+        if self.use_boundary:
             _border = border[:, :, None]
-            f_v = torch.cat([f_v, _border], -1)
+            x = torch.cat([f_v, _border], dim=-1)
 
-        if self.densetcn_options:
-            y_v = self.tcn(f_v).mean(1)
-        else:
-            self.gru.flatten_parameters()
-            y_v, _ = self.gru(f_v)
-            y_v = self.v_cls(self.dropout(y_v)).mean(1)
-
-        return y_v
+        return x if self.extract_feats else self.tcn(x, lengths, B)
 
 
 parser = argparse.ArgumentParser()

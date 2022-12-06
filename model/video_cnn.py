@@ -179,7 +179,7 @@ class VideoCNN(nn.Module):
         # )
 
         # resnet
-        self.resnet18 = ResNet(BasicBlock, [2, 2, 2, 2], se=se, CBAM=CBAM)
+
         self.dropout = nn.Dropout(p=0.5)
         # self.model = MobileNetV2()
         # self.resnest26d = resnest14d()

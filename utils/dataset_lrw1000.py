@@ -5,6 +5,7 @@ from turbojpeg import TJPF_GRAY, TurboJPEG
 
 from .cvtransforms import *
 import torch
+
 jpeg = TurboJPEG()
 
 
@@ -17,11 +18,12 @@ class LRW1000_Dataset(Dataset):
         lines.extend([line.strip().split(',') for line in f.readlines()])
     pinyins = sorted(np.unique([line[2] for line in lines]))
 
-    def __init__(self, phase, args):
+    def __init__(self, phase, args, preprocessing_func=None):
 
         self.args = args
         self.data = []
         self.phase = phase
+        self.preprocessing_func = preprocessing_func
 
         if (self.phase == 'train'):
             # local
@@ -40,108 +42,69 @@ class LRW1000_Dataset(Dataset):
 
         self.data = glob.glob(os.path.join(self.index_root, '*.pkl'))
 
-        self.PhonemeList = ['C', 'a', 'ai', 'ji', 'an', 'jian',
-                            'quan', 'zhao', 'ba', 'li', 'xi',
-                            'bai', 'ban', 'dao', 'fa', 'bang',
-                            'jia', 'bao', 'chi', 'gao', 'hu',
-                            'kuo', 'yu', 'zhang', 'bei', 'bu',
-                            'jing', 'shi', 'yue', 'ben', 'ci',
-                            'bi', 'jiao', 'ru', 'xu', 'bian',
-                            'hua', 'biao', 'da', 'zhi', 'zhun',
-                            'bie', 'bing', 'qie', 'bo', 'chu',
-                            'duan', 'fen', 'guo', 'hui', 'jin',
-                            'men', 'neng', 'shao', 'shu', 'tong',
-                            'yao', 'cai', 'fang', 'qu', 'can',
-                            'ce', 'ceng', 'chan', 'pin', 'sheng',
-                            'ye', 'chang', 'qi', 'yi', 'chao',
-                            'xian', 'che', 'cheng', 'gong', 'nuo',
-                            'wei', 'lai', 'le', 'chuan', 'chuang',
-                            'xin', 'chun', 'qian', 'cong', 'cu',
-                            'cun', 'zai', 'cuo', 'gai', 'xing',
-                            'xue', 'zao', 'dai', 'dan', 'dang',
-                            'di', 'tian', 'zhong', 'de', 'deng',
-                            'dian', 'diao', 'cha', 'yan', 'dong',
-                            'dou', 'du', 'dui', 'wai', 'duo',
-                            'nian', 'e', 'luo', 'si', 'er',
-                            'ling', 'liu', 'san', 'wu', 'ma',
-                            'she', 'ren', 'yuan', 'zhan', 'fan',
-                            'rong', 'zui', 'mian', 'wen',
-                            'xiang', 'fei', 'zi', 'feng', 'shuo',
-                            'fu', 'ze', 'ge', 'shan', 'gan',
-                            'jue', 'shou', 'xie', 'gang', 'xiao',
-                            'jie', 'gei', 'gen', 'ju', 'geng',
-                            'hao', 'he', 'kai', 'min', 'you',
-                            'zuo', 'gou', 'guan', 'zhu',
-                            'guang', 'gui', 'ding', 'zhou', 'nei',
-                            'ha', 'hai', 'shang', 'han', 'nan',
-                            'ping', 'hen', 'hou', 'lian', 'wang',
-                            'ti', 'huan', 'ying', 'huang', 'tan',
-                            'huo', 'zhe', 'jiang', 'lu', 'tuan',
-                            'bin', 'qiang', 'kang', 'su', 'mu',
-                            'xia', 'ri', 'zhuan', 'shen', 'jiu',
-                            'jun', 'ka', 'ta', 'kan', 'kao',
-                            'ke', 'kong', 'kuai', 'la', 'lan',
-                            'lang', 'lao', 'lei', 'liang', 'yong',
-                            'liao', 'lin', 'chen', 'long', 'lou',
-                            'lun', 'mao', 'mei', 'meng', 'mi',
-                            'ming', 'que', 'mo', 'n', 'na', 'me',
-                            'ne', 'ni', 'qing', 'nin', 'nu', 'ou',
-                            'peng', 'pi', 'pian', 'tai', 'pu',
-                            'lie', 'qiao', 'kuang', 'qiu', 'ran',
-                            'rang', 're', 'reng', 'sao', 'miao',
-                            'sen', 'sha', 'te', 'gu', 'shuang',
-                            'shui', 'sou', 'suo', 'sui', 'wan',
-                            'tao', 'tiao', 'zheng', 'tie', 'ting',
-                            'tou', 'piao', 'tu', 'po', 'tui',
-                            'wo', 'ya', 'xuan', 'yang', 'yin',
-                            'hang', 'yun', 'zan', 'zen', 'zeng',
-                            'lve', 'zhei', 'zhen', 'zu', 'zhua',
-                            'zhuang', 'xun', 'zong', 'zou', 'zun']
-
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
 
         pkl = torch.load(self.data[idx])
-        st = -1
-        ed = 39
-        for i, d in enumerate(pkl['duration']):
-            if st == -1 and d == 1:
-                st = i
-            if st != -1 and d == 0:
-                ed = i
-                break
 
-        video = pkl.get('video')
-        video = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in video]
-        video = np.stack(video, 0)
-        video = video[:, :, :, 0]
-        if (self.phase == 'train'):
-            video = RandomCrop(video, (88, 88))
-            video = HorizontalFlip(video)
-        elif self.phase == 'val' or self.phase == 'test':
-            video = CenterCrop(video, (88, 88))
-        pkl['video'] = torch.FloatTensor(video)[:, None, ...] / 255.0
-        # videoTensor = torch.FloatTensor(video)[:, None, ...] / 255.0
-        # for i in range(40):
-        #     mean_video = torch.mean(videoTensor[i, :, :])
-        #     std_video = torch.std(videoTensor[i, :, :])
-        #     if mean_video != torch.zeros(1) and std_video != torch.zeros(1):
-        #         videoTensor[i, :, :] -= mean_video
-        #         videoTensor[i, :, :] /= std_video
-        # pkl['video'] = videoTensor
+        preprocess_data = self.preprocessing_func(pkl)
+        label = self.data[idx][1]
 
-        pinyinlable = np.full((1), 28).astype(pkl['pinyinlable'].dtype)
+        return preprocess_data, label, pkl['during']
 
-        # try:
-        #     t = pkl['pinyinlable'].shape[0]
-        #     pinyinlable[:t, ...] = pkl['pinyinlable'].copy()
-        # except Exception as e:  # 可以写多个捕获异常
-        #     print("ValueError")
-        pkl['pinyinlable'] = pinyinlable
+        # video = pkl.get('video')
+        # video = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in video]
+        # video = np.stack(video, 0)
+        # video = video[:, :, :, 0]
+        # if (self.phase == 'train'):
+        #     video = RandomCrop(video, (88, 88))
+        #     video = HorizontalFlip(video)
+        # elif self.phase == 'val' or self.phase == 'test':
+        #     video = CenterCrop(video, (88, 88))
+        # pkl['video'] = torch.FloatTensor(video)[:, None, ...] / 255.0
+        #
+        # pinyinlable = np.full((1), 28).astype(pkl['pinyinlable'].dtype)
+        #
+        # pkl['pinyinlable'] = pinyinlable
+        #
+        # return pkl
 
-        return pkl
+
+def pad_packed_collate(batch):
+    if len(batch[0]) == 2:
+        use_boundary = False
+        data_tuple, lengths, labels_tuple = zip(
+            *[(a, a.shape[0], b) for (a, b) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
+    elif len(batch[0]) == 3:
+        use_boundary = True
+        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(
+            *[(a, a.shape[0], b, c) for (a, b, c) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
+
+    if data_tuple[0].ndim == 1:
+        max_len = data_tuple[0].shape[0]
+        data_np = np.zeros((len(data_tuple), max_len))
+    elif data_tuple[0].ndim == 3:
+        max_len, h, w = data_tuple[0].shape
+        data_np = np.zeros((len(data_tuple), max_len, h, w))
+    for idx in range(len(data_np)):
+        data_np[idx][:data_tuple[idx].shape[0]] = data_tuple[idx]
+    data = torch.FloatTensor(data_np)
+
+    if use_boundary:
+        boundaries_np = np.zeros((len(boundaries_tuple), len(boundaries_tuple[0])))
+        for idx in range(len(data_np)):
+            boundaries_np[idx] = boundaries_tuple[idx]
+        boundaries = torch.FloatTensor(boundaries_np).unsqueeze(-1)
+
+    labels = torch.LongTensor(labels_tuple)
+
+    if use_boundary:
+        return data, lengths, labels, boundaries
+    else:
+        return data, lengths, labels
+
 
 
 if __name__ == '__main__':
