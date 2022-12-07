@@ -164,7 +164,7 @@ class CosineScheduler:
 
     def adjust_lr(self, optimizer, epoch):
         reduction_ratio = 0.5 * (1 + math.cos(math.pi * epoch / self.epochs))
-        change_lr_on_optimizer(optimizer, self.lr_ori*reduction_ratio)
+        change_lr_on_optimizer(optimizer, self.lr_ori * reduction_ratio)
 
 
 def get_optimizer(args, optim_policies):
@@ -178,6 +178,7 @@ def get_optimizer(args, optim_policies):
     else:
         raise NotImplementedError
     return optimizer
+
 
 import os
 import json
@@ -195,7 +196,7 @@ def calculateNorm2(model):
     para_norm = 0.
     for p in model.parameters():
         para_norm += p.data.norm(2)
-    print('2-norm of the neural network: {:.4f}'.format(para_norm**.5))
+    print('2-norm of the neural network: {:.4f}'.format(para_norm ** .5))
 
 
 def showLR(optimizer):
@@ -223,8 +224,8 @@ class AverageMeter(object):
 
 # -- IO utils
 def read_txt_lines(filepath):
-    assert os.path.isfile( filepath ), "Error when trying to read txt file, path does not exist: {}".format(filepath)
-    with open( filepath ) as myfile:
+    assert os.path.isfile(filepath), "Error when trying to read txt file, path does not exist: {}".format(filepath)
+    with open(filepath) as myfile:
         content = myfile.read().splitlines()
     return content
 
@@ -234,9 +235,9 @@ def save_as_json(d, filepath):
         json.dump(d, outfile, indent=4, sort_keys=True)
 
 
-def load_json( json_fp ):
-    assert os.path.isfile( json_fp ), "Error loading JSON. File provided does not exist, cannot read: {}".format( json_fp )
-    with open( json_fp, 'r' ) as f:
+def load_json(json_fp):
+    assert os.path.isfile(json_fp), "Error loading JSON. File provided does not exist, cannot read: {}".format(json_fp)
+    with open(json_fp, 'r') as f:
         json_content = json.load(f)
     return json_content
 
@@ -248,8 +249,7 @@ def save2npz(filename, data=None):
     np.savez_compressed(filename, data=data)
 
 
-
-def load_model(load_path, model, optimizer = None, allow_size_mismatch = False):
+def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     """
     Load model from file
     If optimizer is passed, then the loaded dictionary is expected to contain also the states of the optimizer.
@@ -257,14 +257,14 @@ def load_model(load_path, model, optimizer = None, allow_size_mismatch = False):
     """
 
     # -- load dictionary
-    assert os.path.isfile( load_path ), "Error when loading the model, provided path not found: {}".format( load_path )
+    assert os.path.isfile(load_path), "Error when loading the model, provided path not found: {}".format(load_path)
     checkpoint = torch.load(load_path)
     loaded_state_dict = checkpoint['model_state_dict']
+    model_state_dict = model.state_dict()
 
     if allow_size_mismatch:
-        loaded_sizes = { k: v.shape for k,v in loaded_state_dict.items() }
-        model_state_dict = model.state_dict()
-        model_sizes = { k: v.shape for k,v in model_state_dict.items() }
+        loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
+        model_sizes = {k: v.shape for k, v in model_state_dict.items()}
         mismatched_params = []
         for k in loaded_sizes:
             if loaded_sizes[k] != model_sizes[k]:
@@ -272,8 +272,15 @@ def load_model(load_path, model, optimizer = None, allow_size_mismatch = False):
         for k in mismatched_params:
             del loaded_state_dict[k]
 
+    pretrained_dict = {k: v for k, v in loaded_state_dict.items() if
+                       k in model_state_dict.keys() and v.size() == model_state_dict[k].size()}
+    missed_params = [k for k, v in model_state_dict.items() if not k in pretrained_dict.keys()]
+
+    print('loaded params/tot params:{}/{}'.format(len(pretrained_dict), len(model_state_dict)))
+    print('miss matched params:', missed_params)
+
     # -- copy loaded state into current model and, optionally, optimizer
-    model.load_state_dict(loaded_state_dict, strict = not allow_size_mismatch)
+    model.load_state_dict(loaded_state_dict, strict=not allow_size_mismatch)
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         return model, optimizer, checkpoint['epoch_idx'], checkpoint
@@ -281,8 +288,8 @@ def load_model(load_path, model, optimizer = None, allow_size_mismatch = False):
 
 
 # -- logging utils
-def get_logger(args,save_path):
-    log_path = '{}/{}_{}_{}classes_log.txt'.format(save_path,args.training_mode,args.lr,args.num_classes)
+def get_logger(args, save_path):
+    log_path = '{}/{}_{}_{}classes_log.txt'.format(save_path, args.training_mode, args.lr, args.n_class)
     logger = logging.getLogger("mylog")
     logger.setLevel(logging.INFO)
     fh = logging.FileHandler(log_path)
@@ -294,13 +301,16 @@ def get_logger(args,save_path):
     return logger
 
 
-def update_logger_batch( args, logger, dset_loader, batch_idx, running_loss, running_corrects, running_all, batch_time, data_time ):
-    perc_epoch = 100. * batch_idx / (len(dset_loader)-1)
-    logger.info(f"[{running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)]\tLoss: {running_loss / running_all:.4f}\tAcc:{running_corrects / running_all:.4f}\tCost time:{batch_time.val:1.3f} ({batch_time.avg:1.3f})s\tData time:{data_time.val:1.3f} ({data_time.avg:1.3f})\tInstances per second: {args.batch_size/batch_time.avg:.2f}")
+def update_logger_batch(args, logger, dset_loader, batch_idx, running_loss, running_corrects, running_all, batch_time,
+                        data_time):
+    perc_epoch = 100. * batch_idx / (len(dset_loader) - 1)
+    logger.info(
+        f"[{running_all:5.0f}/{len(dset_loader.dataset):5.0f} ({perc_epoch:.0f}%)]\tLoss: {running_loss / running_all:.4f}\tAcc:{running_corrects / running_all:.4f}\tCost time:{batch_time.val:1.3f} ({batch_time.avg:1.3f})s\tData time:{data_time.val:1.3f} ({data_time.avg:1.3f})\tInstances per second: {args.batch_size / batch_time.avg:.2f}")
 
-def get_save_folder( args):
+
+def get_save_folder(args):
     # create save and log folder
-    save_path = '{}/{}'.format( args.logging_dir, args.training_mode )
+    save_path = '{}/{}'.format(args.logging_dir, args.training_mode)
     save_path += '/' + datetime.datetime.now().isoformat().split('.')[0]
     if not os.path.isdir(save_path):
         os.makedirs(save_path)

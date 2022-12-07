@@ -10,24 +10,24 @@ from torch.utils.data import Dataset, DataLoader
 from .cvtransforms import *
 import torch
 from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE
+
 jpeg = TurboJPEG()
 
 
-class LRWDataset(Dataset):
+class LRWDataset(object):
     # index_file = f'E:/LRW/info/trn_1000_full.txt'
     # index_file = f'/home/mingwu/workspace_czg/LRW/lipread_mp4'
     index_file = f'/home/czg/lipread_mp4'
     with open('label_sorted.txt') as myfile:
         pinyins = myfile.read().splitlines()
 
-    def __init__(self, phase, index_file):
+    def __init__(self, phase, preprocessing_func=None):
 
+        self.preprocessing_func = preprocessing_func
         self.labels = LRWDataset.pinyins
         self.list = []
         self.unlabel_list = []
         self.phase = phase
-        # self.args = args
-        self.index_file = index_file
 
         for (i, label) in enumerate(self.labels):
             files = glob.glob(os.path.join(LRWDataset.index_file, label, phase, '*.pkl'))
@@ -35,9 +35,12 @@ class LRWDataset(Dataset):
 
             self.list += [file for file in files]
 
+        self.load_dataset()
+
     def __getitem__(self, idx):
 
         tensor = torch.load(self.list[idx])
+        preprocess_data = self.preprocessing_func(tensor)
 
         inputs = tensor.get('video')
         inputs = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in inputs]

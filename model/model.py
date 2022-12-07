@@ -82,7 +82,7 @@ class DenseTCN(nn.Module):
 class Lipreading(nn.Module):
 
     def __init__(self, args, modality='video', dropout=0.5, densetcn_options={}, relu_type='prelu', width_mult=1.0,
-                 use_boundary=False, extract_feats=False):
+                 use_boundary=True, extract_feats=False):
         super(Lipreading, self).__init__()
         self.extract_feats = extract_feats
         self.modality = modality
@@ -90,18 +90,24 @@ class Lipreading(nn.Module):
 
         self.args = args
         self.densetcn_options = densetcn_options
+        # self.frontend3D = nn.Sequential(
+        #     nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+        #     nn.BatchNorm3d(64),
+        #     nn.ReLU(True),
+        #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        # )
+
         self.frontend3D = nn.Sequential(
-            nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+            nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64),
             nn.ReLU(True),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-        )
+            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)))
         self.trunk = ResNet(BasicBlock, [2, 2, 2, 2], TCSAM=True)
 
         if (self.args.border):
@@ -123,13 +129,15 @@ class Lipreading(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, v, lengths, border=None):
-        B, C, T, H, W = v.size()
-        f_v = self.frontend3D(v)
-        f_v = self.dropout(f_v)
+    def forward(self, x, lengths, boundaries=None):
+        B, C, T, H, W = x.size()
+        x = self.frontend3D(x)
+        x = x.transpose(1, 2)
+        x = x.reshape(B * T, x.size(2), x.size(3), x.size(4))
+        x = self.trunk(x)
+        x = x.view(B, T, x.size(1))
         if self.use_boundary:
-            _border = border[:, :, None]
-            x = torch.cat([f_v, _border], dim=-1)
+            x = torch.cat([x, boundaries], dim=-1)
 
         return x if self.extract_feats else self.tcn(x, lengths, B)
 

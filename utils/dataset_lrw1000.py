@@ -71,42 +71,6 @@ class LRW1000_Dataset(Dataset):
         #
         # return pkl
 
-
-def pad_packed_collate(batch):
-    if len(batch[0]) == 2:
-        use_boundary = False
-        data_tuple, lengths, labels_tuple = zip(
-            *[(a, a.shape[0], b) for (a, b) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
-    elif len(batch[0]) == 3:
-        use_boundary = True
-        data_tuple, lengths, labels_tuple, boundaries_tuple = zip(
-            *[(a, a.shape[0], b, c) for (a, b, c) in sorted(batch, key=lambda x: x[0].shape[0], reverse=True)])
-
-    if data_tuple[0].ndim == 1:
-        max_len = data_tuple[0].shape[0]
-        data_np = np.zeros((len(data_tuple), max_len))
-    elif data_tuple[0].ndim == 3:
-        max_len, h, w = data_tuple[0].shape
-        data_np = np.zeros((len(data_tuple), max_len, h, w))
-    for idx in range(len(data_np)):
-        data_np[idx][:data_tuple[idx].shape[0]] = data_tuple[idx]
-    data = torch.FloatTensor(data_np)
-
-    if use_boundary:
-        boundaries_np = np.zeros((len(boundaries_tuple), len(boundaries_tuple[0])))
-        for idx in range(len(data_np)):
-            boundaries_np[idx] = boundaries_tuple[idx]
-        boundaries = torch.FloatTensor(boundaries_np).unsqueeze(-1)
-
-    labels = torch.LongTensor(labels_tuple)
-
-    if use_boundary:
-        return data, lengths, labels, boundaries
-    else:
-        return data, lengths, labels
-
-
-
 if __name__ == '__main__':
     # local
     # target_dir = f'E:/LRW1000_Public_pkl_jpeg/trn'

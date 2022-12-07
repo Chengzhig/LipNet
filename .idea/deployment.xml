@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="czg@10.82.85.162:22 password (8)" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
+  <component name="PublishConfigData" autoUpload="Always" serverName="mingwu@118.31.36.32:10022 password (1)" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
     <serverData>
       <paths name="LRW10.82.77.30">
         <serverdata>
@@ -16,13 +16,6 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="frp2.freefrp.net">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/workspace_czg" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
       <paths name="mingwu@118.31.36.32:10022 password">
         <serverdata>
           <mappings>
@@ -34,27 +27,6 @@
         <serverdata>
           <mappings>
             <mapping deploy="/workspace_czg/pycharmproject" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="mingwu@frp2.freefrp.net:30800 password">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="mingwu@frp2.freefrp.net:30800 password (1)">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="mingwu@frp2.freefrp.net:30800 password (2)">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/mingwu/workspace_czg" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

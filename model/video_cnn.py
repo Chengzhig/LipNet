@@ -41,6 +41,57 @@ class CBAMLayer(nn.Module):
         return x
 
 
+class TCSAMLayer(nn.Module):
+    def __init__(self, channel, time_length, reduction=16, spatial_kernel=7, time_span=10):
+        super(TCSAMLayer, self).__init__()
+        # channel attention 压缩H,W为1
+        self.time_length = time_length
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        # shared MLP
+        self.mlp = nn.Sequential(
+            # Conv2d比Linear方便操作
+            # nn.Linear(channel, channel // reduction, bias=False)
+            nn.Conv2d(channel, channel // reduction, 1, bias=False),
+            # inplace=True直接替换，节省内存
+            nn.ReLU(inplace=True),
+            # nn.Linear(channel // reduction, channel,bias=False)
+            nn.Conv2d(channel // reduction, channel, 1, bias=False)
+        )
+        # spatial attention
+        self.conv = nn.Conv2d(2, 1, kernel_size=spatial_kernel,
+                              padding=spatial_kernel // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+        self.time_avg_pool = nn.AdaptiveAvgPool3d(1)
+        self.time_max_pool = nn.AdaptiveAvgPool3d(1)
+        self.time_Conv = nn.Sequential(
+            nn.Conv3d(time_length, time_length // time_span, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(time_length // time_span, time_length, 1, bias=False)
+        )
+
+    def forward(self, x):
+        # B*T,C,W,H
+        BT, C, W, H = x.shape[:]
+        max_out = self.mlp(self.max_pool(x))
+        avg_out = self.mlp(self.avg_pool(x))
+        channel_out = self.sigmoid(max_out + avg_out)
+        x = channel_out * x
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        spatial_out = self.sigmoid(self.conv(torch.cat([max_out, avg_out], dim=1)))
+        x = spatial_out * x
+
+        x = x.view(-1, self.time_length, C, W, H)  # x = B,T,C,W,H
+        max_out = self.time_Conv(self.time_max_pool(x))
+        avg_out = self.time_Conv(self.time_avg_pool(x))
+        timeAvg_out = self.sigmoid(max_out + avg_out)
+        x = timeAvg_out * x
+        x = x.view(-1, C, W, H)
+        return x
+
+
 def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
@@ -50,62 +101,69 @@ def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1)
 
 
+class Swish(nn.Module):
+    """Construct an Swish object."""
+
+    def forward(self, x):
+        """Return Swich activation function."""
+        return x * torch.sigmoid(x)
+
+
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, se=False, CBAM=False):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, TCSAM=False, relu_type='prelu'):
         super(BasicBlock, self).__init__()
+        assert relu_type in ['relu', 'prelu', 'swish']
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
+        if relu_type == 'relu':
+            self.relu1 = nn.ReLU(inplace=True)
+            self.relu2 = nn.ReLU(inplace=True)
+        elif relu_type == 'prelu':
+            self.relu1 = nn.PReLU(num_parameters=planes)
+            self.relu2 = nn.PReLU(num_parameters=planes)
+        elif relu_type == 'swish':
+            self.relu1 = Swish()
+            self.relu2 = Swish()
+        else:
+            raise Exception('relu type not implemented')
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
         self.stride = stride
-        self.se = se
-        self.CBAM = CBAM
+        self.TCSAM = TCSAM
 
-        if (self.se):
-            self.gap = nn.AdaptiveAvgPool2d(1)
-            self.conv3 = conv1x1(planes, planes // 16)
-            self.conv4 = conv1x1(planes // 16, planes)
-
-        if (self.CBAM):
-            self.CBAM = CBAMLayer(planes)
+        if (self.TCSAM):
+            self.TCSAM = TCSAMLayer(planes, time_length=29)
 
     def forward(self, x):
         residual = x
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.relu1(out)
         out = self.conv2(out)
         out = self.bn2(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
 
-        if self.se:
-            w = self.gap(out)
-            w = self.conv3(w)
-            w = self.relu(w)
-            w = self.conv4(w).sigmoid()
-            out = out * w
-        if self.CBAM:
-            out = self.CBAM(out)
+        if self.TCSAM:
+            out = self.TCSAM(out)
 
         out = out + residual
-        out = self.relu(out)
+        out = self.relu2(out)
 
         return out
 
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, se=False, CBAM=False):
+    def __init__(self, block, layers, TCSAM=False, relu_type='relu'):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.se = se
-        self.CBAM = CBAM
+        self.TCSAM = TCSAM
+        self.relu_type = relu_type
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
@@ -113,7 +171,6 @@ class ResNet(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool2d(1)
 
-        self.bn = nn.BatchNorm1d(512)
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -135,10 +192,10 @@ class ResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample, se=self.se, CBAM=self.CBAM))
+        layers.append(block(self.inplanes, planes, stride, downsample, TCSAM=self.TCSAM, relu_type=self.relu_type))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, se=self.se, CBAM=self.CBAM))
+            layers.append(block(self.inplanes, planes, TCSAM=self.TCSAM, relu_type=self.relu_type))
 
         return nn.Sequential(*layers)
 
@@ -149,7 +206,7 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.bn(x)
+        # x = self.bn(x)
         return x
 
 
