@@ -88,12 +88,11 @@ parser.add_argument('--densetcn-condense', default=False, action='store_true', h
 parser.add_argument('--training-mode', default='tcn', help='tcn')
 parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'sgd', 'adamw'])
 parser.add_argument('--init-epoch', default=0, type=int, help='epoch to start at')
-parser.add_argument('--epochs', default=80, type=int, help='number of epochs')
 # -- mixup
 parser.add_argument('--alpha', default=0.4, type=float, help='interpolation strength (uniform=1., ERM=0.)')
 # -- test
 parser.add_argument('--model-path', type=str,
-                    default='/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/lrw_resnet18_dctcn_video_boundary.pth',
+                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-07T13:57:02/ckpt.best.pth',
                     help='Pretrained model pathname')
 parser.add_argument('--allow-size-mismatch', default=True, action='store_true',
                     help='If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes')
@@ -282,7 +281,7 @@ def train(model, dset_loader, criterion, epoch, optimizer, logger):
     lr = showLR(optimizer)
 
     logger.info('-' * 10)
-    logger.info(f"Epoch {epoch}/{args.epochs - 1}")
+    logger.info(f"Epoch {epoch}/{args.max_epoch - 1}")
     logger.info(f"Current learning rate: {lr}")
 
     model.train()
@@ -398,7 +397,7 @@ def main():
     # -- get optimizer
     optimizer = get_optimizer(args, optim_policies=model.parameters())
     # -- get learning rate scheduler
-    scheduler = CosineScheduler(args.lr, args.epochs)
+    scheduler = CosineScheduler(args.lr, args.max_epoch)
 
     if args.model_path:
         assert args.model_path.endswith('.pth') and os.path.isfile(args.model_path), \
@@ -430,7 +429,7 @@ def main():
 
     epoch = args.init_epoch
 
-    while epoch < args.epochs:
+    while epoch < args.max_epoch:
         model = train(model, dset_loaders['train'], criterion, epoch, optimizer, logger)
         acc_avg_val, loss_avg_val = test(model, dset_loaders['val'], criterion)
         logger.info(

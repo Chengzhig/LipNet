@@ -192,9 +192,14 @@ class MyDataset(object):
             data = self._apply_variable_length_aug(self.list[idx][0], raw_data)
         else:
             data = raw_data
+
+        # LRW数据直接输入的处理
         data = [jpeg.decode(img, pixel_format=TJPF_GRAY) for img in data]
         data = np.stack(data, 0)
         data = data.squeeze(-1)
+
+
+
         preprocess_data = self.preprocessing_func(data)
 
         label = self.list[idx][1]
