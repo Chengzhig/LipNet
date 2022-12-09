@@ -21,7 +21,6 @@ from utils.util import update_logger_batch, AverageMeter, mixup_data, mixup_crit
     CosineScheduler, get_logger, load_model, save2npz, get_save_folder, calculateNorm2
 
 torch.backends.cudnn.benchmark = True
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 parser = argparse.ArgumentParser()
 
 
@@ -92,7 +91,7 @@ parser.add_argument('--init-epoch', default=0, type=int, help='epoch to start at
 parser.add_argument('--alpha', default=0.4, type=float, help='interpolation strength (uniform=1., ERM=0.)')
 # -- test
 parser.add_argument('--model-path', type=str,
-                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-07T13:57:02/ckpt.best.pth',
+                    default='/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/lrw_resnet18_dctcn_video_boundary.pth',
                     help='Pretrained model pathname')
 parser.add_argument('--allow-size-mismatch', default=True, action='store_true',
                     help='If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes')
@@ -124,6 +123,7 @@ elif (args.dataset == 'lrw1000'):
 else:
     raise Exception('lrw or lrw1000')
 
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 
 def load_json(json_fp):
     assert os.path.isfile(json_fp), "Error loading JSON. File provided does not exist, cannot read: {}".format(json_fp)

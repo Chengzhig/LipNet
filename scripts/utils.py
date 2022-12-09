@@ -10,8 +10,8 @@ def load_video(filename):
     :param filename: str, the fileanme for a video sequence.
     """
     cap = cv2.VideoCapture(filename)
-    while(cap.isOpened()):
-        ret, frame = cap.read() # BGR
+    while (cap.isOpened()):
+        ret, frame = cap.read()  # BGR
         if ret:
             yield frame
         else:
@@ -35,10 +35,10 @@ def load_audio(audio_filename, specified_sr=16000, int_16=True):
             audio = librosa.resample(audio, sr, specified_sr) if sr != specified_sr else audio
     except IOError:
         sys.exit()
-    if int_16 and audio.dtype==np.float32:
-        audio = ((audio - 1.) * (65535./2.) + 32767.).astype(np.int16)
-        audio = np.array(np.clip(np.round(audio), -2**15, 2**15-1), dtype=np.int16)
-    if not int_16 and audio.dtype==np.int16:
+    if int_16 and audio.dtype == np.float32:
+        audio = ((audio - 1.) * (65535. / 2.) + 32767.).astype(np.int16)
+        audio = np.array(np.clip(np.round(audio), -2 ** 15, 2 ** 15 - 1), dtype=np.int16)
+    if not int_16 and audio.dtype == np.int16:
         audio = ((audio - 32767.) * 2 / 65535. + 1).astype(np.float32)
     return audio
 

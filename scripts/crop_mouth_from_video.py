@@ -1,6 +1,9 @@
 import os
 import glob
 import argparse
+
+import numpy as np
+
 from dataloader import AVSRDataLoader
 from utils import save2npz
 
@@ -10,8 +13,10 @@ def load_args(default_config=None):
     # -- utils
     parser.add_argument('--video-direc', default='/home/czg/lipread_mp4', help='raw video directory')
     parser.add_argument('--landmark-direc', default='/home/czg/LRW_landmarks', help='landmark directory')
-    parser.add_argument('--filename-path', default='./lrw500_detected_face.csv', help='list of detected video and its subject ID')
-    parser.add_argument('--save-direc', default='/home/czg/lrw_roi_80_116_175_211_npy_gray_pkl_jpeg', help='the directory of saving mouth ROIs')
+    parser.add_argument('--filename-path', default='./lrw500_detected_face.csv',
+                        help='list of detected video and its subject ID')
+    parser.add_argument('--save-direc', default='/home/czg/lrw_roi_80_116_175_211_npy_gray_pkl_jpeg',
+                        help='the directory of saving mouth ROIs')
     # -- convert to gray scale
     parser.add_argument('--convert-gray', default=False, action='store_true', help='convert2grayscale')
     # -- test set only
@@ -19,6 +24,7 @@ def load_args(default_config=None):
 
     args = parser.parse_args()
     return args
+
 
 args = load_args()
 
@@ -28,21 +34,26 @@ modality = "video"
 
 lines = open(args.filename_path).read().splitlines()
 lines = list(filter(lambda x: 'test' == x.split('/')[-2], lines)) if args.testset_only else lines
+lines = lines[::-1]
 
 for filename_idx, line in enumerate(lines):
 
     filename, person_id = line.split(',')
     print(f'idx: {filename_idx} \tProcessing.\t{filename}')
 
-    video_filename = os.path.join(args.video_direc, filename+'.mp4')
-    landmarks_filename = os.path.join(args.landmark_direc, filename+'.pkl')
-    dst_filename = os.path.join( args.save_direc, filename+'.npz')
+    video_filename = os.path.join(args.video_direc, filename + '.mp4')
+    landmarks_filename = os.path.join(args.landmark_direc, filename + '.pkl')
+    dst_filename = os.path.join(args.save_direc, filename + '.npz')
 
     assert os.path.isfile(video_filename), f"File does not exist. Path input: {video_filename}"
     assert os.path.isfile(landmarks_filename), f"File does not exist. Path input: {landmarks_filename}"
 
     if os.path.exists(dst_filename):
-        continue
+        data = np.load(dst_filename, allow_pickle=True)['data']
+        if len(data.shape) != 3:
+            pass
+        else:
+            continue
 
     # Extract mouth patches from segments
     sequence = dataloader.load_data(
@@ -52,7 +63,7 @@ for filename_idx, line in enumerate(lines):
     )
 
     try:
-        if not os.path.exists(dst_filename):
-            save2npz(dst_filename, data=sequence)
+        # if not os.path.exists(dst_filename):
+        save2npz(dst_filename, data=sequence)
     except AssertionError:
         continue
