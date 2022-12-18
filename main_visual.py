@@ -91,7 +91,7 @@ parser.add_argument('--init-epoch', default=0, type=int, help='epoch to start at
 parser.add_argument('--alpha', default=0.4, type=float, help='interpolation strength (uniform=1., ERM=0.)')
 # -- test
 parser.add_argument('--model-path', type=str,
-                    default='/home/czg/LRW/pythonproject/checkpoints/lrw-1000-baseline/lrw_resnet18_dctcn_video_boundary.pth',
+                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-09T15:20:30/ckpt.best.pth',
                     help='Pretrained model pathname')
 parser.add_argument('--allow-size-mismatch', default=True, action='store_true',
                     help='If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes')
