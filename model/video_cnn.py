@@ -65,10 +65,10 @@ class TCSAMLayer(nn.Module):
 
         self.time_avg_pool = nn.AdaptiveAvgPool3d(1)
         self.time_max_pool = nn.AdaptiveAvgPool3d(1)
-        self.time_Conv = nn.Sequential(
-            nn.Conv3d(time_length, time_length // time_span, 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(time_length // time_span, time_length, 1, bias=False)
+        self.conv2 = nn.Sequential(
+            nn.Conv3d(2, 1, kernel_size=[5, 7, 7], padding=[2, 3, 3], bias=False),
+            # nn.ReLU(inplace=True),
+            # nn.Conv3d(time_length // time_span, time_length, 1, bias=False)
         )
 
     def forward(self, x):
@@ -84,9 +84,14 @@ class TCSAMLayer(nn.Module):
         x = spatial_out * x
 
         x = x.view(-1, self.time_length, C, W, H)  # x = B,T,C,W,H
-        max_out = self.time_Conv(self.time_max_pool(x))
-        avg_out = self.time_Conv(self.time_avg_pool(x))
-        timeAvg_out = self.sigmoid(max_out + avg_out)
+        # max_out = self.time_Conv(self.time_max_pool(x))
+        # avg_out = self.time_Conv(self.time_avg_pool(x))
+        # timeAvg_out = self.sigmoid(max_out + avg_out)
+
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        timeAvg_out = self.sigmoid(self.conv2(torch.cat([max_out, avg_out], dim=1)))
+
         x = timeAvg_out * x
         x = x.view(-1, C, W, H)
         return x

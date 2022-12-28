@@ -91,7 +91,7 @@ parser.add_argument('--init-epoch', default=0, type=int, help='epoch to start at
 parser.add_argument('--alpha', default=0.4, type=float, help='interpolation strength (uniform=1., ERM=0.)')
 # -- test
 parser.add_argument('--model-path', type=str,
-                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-09T15:20:30/ckpt.best.pth',
+                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-18T16:48:25/ckpt.best.pth',
                     help='Pretrained model pathname')
 parser.add_argument('--allow-size-mismatch', default=True, action='store_true',
                     help='If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes')
@@ -114,14 +114,15 @@ parser.add_argument('--use-boundary', default=False, action='store_true',
                     help='include hard border at the testing stage.')
 
 args = parser.parse_args()
-if (args.dataset == 'lrw'):
-    print("lrw")
-    from utils import LRWDataset as Dataset
-elif (args.dataset == 'lrw1000'):
-    print("lrw1000")
-    from utils import LRW1000_Dataset as Dataset
-else:
-    raise Exception('lrw or lrw1000')
+# if (args.dataset == 'lrw'):
+#     print("lrw")
+#     from utils import LRWDataset as Dataset
+# elif (args.dataset == 'lrw1000'):
+#     print("lrw1000")
+#     from utils import LRW1000_Dataset as Dataset
+# else:
+#     raise Exception('lrw or lrw1000')
+
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
 

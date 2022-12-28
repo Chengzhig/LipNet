@@ -262,15 +262,15 @@ def load_model(load_path, model, optimizer=None, allow_size_mismatch=False):
     loaded_state_dict = checkpoint['model_state_dict']
     model_state_dict = model.state_dict()
 
-    if allow_size_mismatch:
-        loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
-        model_sizes = {k: v.shape for k, v in model_state_dict.items()}
-        mismatched_params = []
-        for k in loaded_sizes:
-            if loaded_sizes[k] != model_sizes[k]:
-                mismatched_params.append(k)
-        for k in mismatched_params:
-            del loaded_state_dict[k]
+    # if allow_size_mismatch:
+    #     loaded_sizes = {k: v.shape for k, v in loaded_state_dict.items()}
+    #     model_sizes = {k: v.shape for k, v in model_state_dict.items()}
+    #     mismatched_params = []
+    #     for k in loaded_sizes:
+    #         if loaded_sizes[k] != model_sizes[k]:
+    #             mismatched_params.append(k)
+    #     for k in mismatched_params:
+    #         del loaded_state_dict[k]
 
     pretrained_dict = {k: v for k, v in loaded_state_dict.items() if
                        k in model_state_dict.keys() and v.size() == model_state_dict[k].size()}

@@ -48,9 +48,9 @@ def get_data_loaders(args):
     partitions = ['test'] if args.test else ['train', 'val', 'test']
     dsets = {partition: MyDataset(modality=args.modality,
                                   data_partition=partition,
-                                  data_dir=f'/home/czg/lrw_roi_80_116_175_211_npy_gray_pkl_jpeg',
+                                  data_dir=f'/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg',
                                   label_fp='label_sorted.txt',
-                                  annonation_direc=f'/home/czg/lipread_mp4',
+                                  annonation_direc=f'/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg',
                                   preprocessing_func=preprocessing[partition],
                                   data_suffix='.npz',
                                   use_boundary=True, ) for partition in partitions}
