@@ -91,7 +91,7 @@ parser.add_argument('--init-epoch', default=0, type=int, help='epoch to start at
 parser.add_argument('--alpha', default=0.4, type=float, help='interpolation strength (uniform=1., ERM=0.)')
 # -- test
 parser.add_argument('--model-path', type=str,
-                    default='/home/czg/LRW/pythonproject/train_logs/tcn/2022-12-18T16:48:25/ckpt.best.pth',
+                    default='',
                     help='Pretrained model pathname')
 parser.add_argument('--allow-size-mismatch', default=True, action='store_true',
                     help='If True, allows to init from model with mismatching weight tensors. Useful to init from model with diff. number of classes')
@@ -337,7 +337,7 @@ def extract_feats(model):
     :rtype: FloatTensor
     """
     model.eval()
-    preprocessing_func = get_preprocessing_pipelines()['test']
+    preprocessing_func = get_preprocessing_pipelines()['tst']
     data = preprocessing_func(np.load(args.mouth_patch_path)['data'])  # data: TxHxW
     return model(torch.FloatTensor(data)[None, None, :, :, :].cuda(), lengths=[data.shape[0]])
 
@@ -419,9 +419,9 @@ def main():
             return
         # if test-time, performance on test partition and exit. Otherwise, performance on validation and continue (sanity check for reload)
         if args.test:
-            acc_avg_test, loss_avg_test = test(model, dset_loaders['test'], criterion)
+            acc_avg_test, loss_avg_test = test(model, dset_loaders['tst'], criterion)
             logger.info(
-                f"Test-time performance on partition {'test'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}")
+                f"Test-time performance on partition {'tst'}: Loss: {loss_avg_test:.4f}\tAcc:{acc_avg_test:.4f}")
             return
 
     # -- fix learning rate after loading the ckeckpoint (latency)
@@ -431,7 +431,7 @@ def main():
     epoch = args.init_epoch
 
     while epoch < args.max_epoch:
-        model = train(model, dset_loaders['train'], criterion, epoch, optimizer, logger)
+        model = train(model, dset_loaders['trn'], criterion, epoch, optimizer, logger)
         acc_avg_val, loss_avg_val = test(model, dset_loaders['val'], criterion)
         logger.info(
             f"{'val'} Epoch:\t{epoch:2}\tLoss val: {loss_avg_val:.4f}\tAcc val:{acc_avg_val:.4f}, LR: {showLR(optimizer)}")
@@ -448,7 +448,7 @@ def main():
     # -- evaluate best-performing epoch on test partition
     best_fp = os.path.join(ckpt_saver.save_dir, ckpt_saver.best_fn)
     _ = load_model(best_fp, model)
-    acc_avg_test, loss_avg_test = test(model, dset_loaders['test'], criterion)
+    acc_avg_test, loss_avg_test = test(model, dset_loaders['tst'], criterion)
     logger.info(f"Test time performance of best epoch: {acc_avg_test} (loss: {loss_avg_test})")
 
 

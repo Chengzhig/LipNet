@@ -13,7 +13,7 @@ def get_preprocessing_pipelines(modality):
     if modality == 'video':
         crop_size = (88, 88)
         (mean, std) = (0.421, 0.165)
-        preprocessing['train'] = Compose([
+        preprocessing['trn'] = Compose([
             Normalize(0.0, 255.0),
             RandomCrop(crop_size),
             HorizontalFlip(0.5),
@@ -26,17 +26,17 @@ def get_preprocessing_pipelines(modality):
             CenterCrop(crop_size),
             Normalize(mean, std)])
 
-        preprocessing['test'] = preprocessing['val']
+        preprocessing['tst'] = preprocessing['val']
 
     elif modality == 'audio':
 
-        preprocessing['train'] = Compose([
+        preprocessing['trn'] = Compose([
             AddNoise(noise=np.load('./data/babbleNoise_resample_16K.npy')),
             NormalizeUtterance()])
 
         preprocessing['val'] = NormalizeUtterance()
 
-        preprocessing['test'] = NormalizeUtterance()
+        preprocessing['tst'] = NormalizeUtterance()
 
     return preprocessing
 
@@ -45,7 +45,8 @@ def get_data_loaders(args):
     preprocessing = get_preprocessing_pipelines(args.modality)
 
     # create dataset object for each partition
-    partitions = ['test'] if args.test else ['train', 'val', 'test']
+    # partitions = ['test'] if args.test else ['train', 'val', 'test']
+    partitions = ['tst'] if args.test else ['trn', 'val', 'tst']
     dsets = {partition: MyDataset(modality=args.modality,
                                   data_partition=partition,
                                   data_dir=f'/home/mingwu/workspace_czg/LRW/LRW1000_Public_pkl_jpeg',

@@ -11,8 +11,8 @@ jpeg = TurboJPEG()
 
 class LRW1000_Dataset(Dataset):
     # index_file = f'E:/LRW/info/trn_1000_full.txt'
-    # index_file = f'/home/mingwu/workspace_czg/LRW/info/trn_1000.txt'
-    index_file = f'/home/czg/trn_1000.txt'
+    index_file = f'/home/mingwu/workspace_czg/LRW/info/trn_1000.txt'
+    # index_file = f'/home/czg/trn_1000.txt'
     lines = []
     with open(index_file, 'r', encoding="utf-8") as f:
         lines.extend([line.strip().split(',') for line in f.readlines()])

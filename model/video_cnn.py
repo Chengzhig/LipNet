@@ -78,6 +78,7 @@ class TCSAMLayer(nn.Module):
         avg_out = self.mlp(self.avg_pool(x))
         channel_out = self.sigmoid(max_out + avg_out)
         x = channel_out * x
+
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         avg_out = torch.mean(x, dim=1, keepdim=True)
         spatial_out = self.sigmoid(self.conv(torch.cat([max_out, avg_out], dim=1)))
@@ -140,7 +141,7 @@ class BasicBlock(nn.Module):
         self.TCSAM = TCSAM
 
         if (self.TCSAM):
-            self.TCSAM = TCSAMLayer(planes, time_length=29)
+            self.TCSAM = TCSAMLayer(planes, time_length=40)
 
     def forward(self, x):
         residual = x
@@ -220,25 +221,25 @@ class VideoCNN(nn.Module):
         super(VideoCNN, self).__init__()
 
         # frontend3D
-        self.frontend3D = nn.Sequential(
-            nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
-            nn.BatchNorm3d(32),
-            nn.ReLU(True),
-            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
-            nn.BatchNorm3d(64),
-            nn.ReLU(True),
-            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
-        )
-
         # self.frontend3D = nn.Sequential(
-        #     nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
+        #     nn.Conv3d(1, 32, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
+        #     nn.BatchNorm3d(32),
+        #     nn.ReLU(True),
+        #     nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1), bias=False),
         #     nn.BatchNorm3d(64),
         #     nn.ReLU(True),
         #     nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
         # )
+
+        self.frontend3D = nn.Sequential(
+            nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(1, 2, 2), padding=(2, 3, 3), bias=False),
+            nn.BatchNorm3d(64),
+            nn.ReLU(True),
+            nn.MaxPool3d(kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1))
+        )
 
         # resnet
 

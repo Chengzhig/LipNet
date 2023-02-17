@@ -72,7 +72,7 @@ class MyDataset(object):
     def load_dataset(self):
 
         # -- read the labels file
-        self._labels = read_txt_lines(self._label_fp)
+        # self._labels = read_txt_lines(self._label_fp)
 
         # -- add examples to self._data_files
         self._get_files_for_partition()
@@ -81,8 +81,8 @@ class MyDataset(object):
         self.list = dict()
         self.instance_ids = dict()
         for i, x in enumerate(self._data_files):
-            label = self._get_label_from_path(x)
-            self.list[i] = [x, self._labels.index(label)]
+            label = self._get_1000label_from_path(x)
+            self.list[i] = [x, label]
             self.instance_ids[i] = self._get_instance_id_from_path(x)
 
         print(f"Partition {self._data_partition} loaded")
@@ -95,6 +95,9 @@ class MyDataset(object):
     def _get_label_from_path(self, x):
         return x.split('/')[self.label_idx]
 
+    def _get_1000label_from_path(self, x):
+        return torch.load(x)['label']
+
     def _get_files_for_partition(self):
         # get rgb/mfcc file paths
 
@@ -106,20 +109,24 @@ class MyDataset(object):
         # search_str_npz = os.path.join(dir_fp, '*', self._data_partition, '*.npz')
         # search_str_npy = os.path.join(dir_fp, '*', self._data_partition, '*.npy')
         # search_str_mp4 = os.path.join(dir_fp, '*', self._data_partition, '*.mp4')
-        search_str_pkl = os.path.join(dir_fp, '*', self._data_partition, '*.pkl')
+        # search_str_pkl = os.path.join(dir_fp, '*', self._data_partition, '*.pkl')
+
+        search_str_pkl = os.path.join(dir_fp, self._data_partition, '*.pkl')
         # self._data_files.extend(glob.glob(search_str_npz))
         # self._data_files.extend(glob.glob(search_str_npy))
         # self._data_files.extend(glob.glob(search_str_mp4))
         self._data_files.extend(glob.glob(search_str_pkl))
 
         # If we are not using the full set of labels, remove examples for labels not used
-        self._data_files = [f for f in self._data_files if f.split('/')[self.label_idx] in self._labels]
+        # self._data_files = [f for f in self._data_files if f.split('/')[self.label_idx] in self._labels]
 
     def load_data(self, filename):
 
         try:
             if filename.endswith('npz'):
                 return np.load(filename)['data']
+            elif filename.endswith('pkl'):
+                return torch.load(filename)['video']
             elif filename.endswith('mp4'):
                 return librosa.load(filename, sr=16000)[0][-19456:]
             else:
@@ -144,34 +151,37 @@ class MyDataset(object):
 
         return raw_data[left_idx:right_idx]
 
+
     def _get_boundary(self, filename, raw_data):
         # read info txt file (to see duration of word, to be used to do temporal cropping)
-        info_txt = os.path.join(self._annonation_direc, *filename.split('/')[self.label_idx:])  # swap base folder
-        info_txt = os.path.splitext(info_txt)[0] + '.txt'  # swap extension
-        info = read_txt_lines(info_txt)
+        # info_txt = os.path.join(self._annonation_direc, *filename.split('/')[self.label_idx:])  # swap base folder
+        # info_txt = os.path.splitext(info_txt)[0] + '.txt'  # swap extension
+        # info = read_txt_lines(info_txt)
+        #
+        # utterance_duration = float(info[4].split(' ')[1])
+        # # boundary is used for the features at the top of ResNet, which as a frame rate of 25fps.
+        # if self.fps == 25:
+        #     half_interval = int(utterance_duration / 2.0 * self.fps)
+        #     n_frames = raw_data.shape[0]
+        # elif self.fps == 16000:
+        #     half_interval = int(utterance_duration / 2.0 * 25)
+        #     n_frames = raw_data.shape[0] // 640
+        #
+        # mid_idx = (n_frames - 1) // 2  # video has n frames, mid point is (n-1)//2 as count starts with 0
+        # left_idx = max(0, mid_idx - half_interval - 1)
+        # right_idx = min(mid_idx + half_interval + 1, n_frames)
+        #
+        # boundary = np.zeros(n_frames)
+        # boundary[left_idx:right_idx] = 1
+        # return boundary
 
-        utterance_duration = float(info[4].split(' ')[1])
-        # boundary is used for the features at the top of ResNet, which as a frame rate of 25fps.
-        if self.fps == 25:
-            half_interval = int(utterance_duration / 2.0 * self.fps)
-            n_frames = raw_data.shape[0]
-        elif self.fps == 16000:
-            half_interval = int(utterance_duration / 2.0 * 25)
-            n_frames = raw_data.shape[0] // 640
-
-        mid_idx = (n_frames - 1) // 2  # video has n frames, mid point is (n-1)//2 as count starts with 0
-        left_idx = max(0, mid_idx - half_interval - 1)
-        right_idx = min(mid_idx + half_interval + 1, n_frames)
-
-        boundary = np.zeros(n_frames)
-        boundary[left_idx:right_idx] = 1
-        return boundary
+        return torch.load(filename)['duration']
 
     def preprocessing(self):
 
         crop_size = (88, 88)
         (mean, std) = (0.421, 0.165)
-        if self.data_partition == 'train':
+        if self.data_partition == 'trn':
             Compose([
                 Normalize(0.0, 255.0),
                 RandomCrop(crop_size),
@@ -188,7 +198,7 @@ class MyDataset(object):
     def __getitem__(self, idx):
         raw_data = self.load_data(self.list[idx][0])
         # -- perform variable length on training set
-        if (self._data_partition == 'train') and self.is_var_length and not self.use_boundary:
+        if (self._data_partition == 'trn') and self.is_var_length and not self.use_boundary:
             data = self._apply_variable_length_aug(self.list[idx][0], raw_data)
         else:
             data = raw_data
